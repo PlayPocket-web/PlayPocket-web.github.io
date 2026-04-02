@@ -1,7 +1,8 @@
 const DB_NAME = 'offline-playlist-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_VIDEOS = 'videos';
 const STORE_PLAYLISTS = 'playlists';
+const STORE_SHARED = 'sharedPlaylists';
 
 let db;
 let currentPlaylist = null;
@@ -9,6 +10,7 @@ let currentIndex = 0;
 let playMode = 'order';
 let shuffleOrder = [];
 let videoListCache = {};
+let currentObjectURL = null;
 
 const fileInput = document.getElementById('fileInput');
 const dropZone = document.getElementById('dropZone');
@@ -29,30 +31,53 @@ const exportMetaBtn = document.getElementById('exportMetaBtn');
 const exportWithBlobsBtn = document.getElementById('exportWithBlobsBtn');
 const importFile = document.getElementById('importFile');
 
-async function loadAllPlaylists(){
-  const pls = await idbGetAll(STORE_PLAYLISTS);
-  return pls;
+const shareBtn = document.getElementById('shareBtn');
+const shareURL = document.getElementById('shareURL');
+const qrCodeEl = document.getElementById('qrCode');
+
+const menuToggle = document.getElementById('menuToggle');
+const sidebar = document.querySelector('.sidebar');
+const overlay = document.getElementById('overlay');
+
+async function loadAllPlaylists() {
+  return await idbGetAll(STORE_PLAYLISTS);
 }
 
-function openDB(){
+function openDB() {
   return new Promise((res, rej) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
+
     req.onupgradeneeded = e => {
       const idb = e.target.result;
-      if(!idb.objectStoreNames.contains(STORE_VIDEOS)){
-        idb.createObjectStore(STORE_VIDEOS, {keyPath:'id'});
+
+      if (!idb.objectStoreNames.contains(STORE_VIDEOS)) {
+        idb.createObjectStore(STORE_VIDEOS, { keyPath: 'id' });
       }
-      if(!idb.objectStoreNames.contains(STORE_PLAYLISTS)){
-        idb.createObjectStore(STORE_PLAYLISTS, {keyPath:'name'});
+      if (!idb.objectStoreNames.contains(STORE_PLAYLISTS)) {
+        idb.createObjectStore(STORE_PLAYLISTS, { keyPath: 'name' });
+      }
+      if (!idb.objectStoreNames.contains(STORE_SHARED)) {
+        idb.createObjectStore(STORE_SHARED, { keyPath: 'uuid' });
       }
     };
-    req.onsuccess = e => { db = e.target.result; res(db); };
+
+    req.onsuccess = e => {
+      db = e.target.result;
+      res(db);
+    };
+
     req.onerror = e => rej(e);
   });
 }
 
-function idbPut(store, value){
+async function ensureDB() {
+  if (db) return db;
+  return await openDB();
+}
+
+function idbPut(store, value) {
   return new Promise((res, rej) => {
+    if (!db) return rej(new Error('DB not initialized'));
     const tx = db.transaction(store, 'readwrite');
     const s = tx.objectStore(store);
     const r = s.put(value);
@@ -60,8 +85,10 @@ function idbPut(store, value){
     r.onerror = e => rej(e);
   });
 }
-function idbGet(store, key){
+
+function idbGet(store, key) {
   return new Promise((res, rej) => {
+    if (!db) return rej(new Error('DB not initialized'));
     const tx = db.transaction(store, 'readonly');
     const s = tx.objectStore(store);
     const r = s.get(key);
@@ -69,8 +96,10 @@ function idbGet(store, key){
     r.onerror = e => rej(e);
   });
 }
-function idbGetAll(store){
+
+function idbGetAll(store) {
   return new Promise((res, rej) => {
+    if (!db) return rej(new Error('DB not initialized'));
     const tx = db.transaction(store, 'readonly');
     const s = tx.objectStore(store);
     const r = s.getAll();
@@ -78,8 +107,10 @@ function idbGetAll(store){
     r.onerror = e => rej(e);
   });
 }
-function idbDelete(store, key){
+
+function idbDelete(store, key) {
   return new Promise((res, rej) => {
+    if (!db) return rej(new Error('DB not initialized'));
     const tx = db.transaction(store, 'readwrite');
     const s = tx.objectStore(store);
     const r = s.delete(key);
@@ -88,49 +119,89 @@ function idbDelete(store, key){
   });
 }
 
-async function idbRenamePlaylist(oldName, newName){
-  if(oldName === newName) return;
+async function idbRenamePlaylist(oldName, newName) {
+  if (oldName === newName) return;
   const exists = await idbGet(STORE_PLAYLISTS, newName);
-  if(exists) throw new Error('exists');
+  if (exists) throw new Error('exists');
   const pl = await idbGet(STORE_PLAYLISTS, oldName);
-  if(!pl) throw new Error('notfound');
+  if (!pl) throw new Error('notfound');
   const newPl = { name: newName, items: pl.items.slice() };
   await idbPut(STORE_PLAYLISTS, newPl);
   await idbDelete(STORE_PLAYLISTS, oldName);
 }
 
-function uid(){ return 'id-' + Math.random().toString(36).slice(2,10); }
-function formatTime(sec){
-  if(!isFinite(sec)) return '00:00:00';
-  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = Math.floor(sec%60);
-  return [h,m,s].map(v=>String(v).padStart(2,'0')).join(':');
+function uid() {
+  return 'id-' + Math.random().toString(36).slice(2, 10);
 }
 
-async function generateThumbnail(file){
+function generateUUID() {
+  return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+  );
+}
+
+function formatTime(sec) {
+  if (!isFinite(sec)) return '00:00:00';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  return [h, m, s].map(v => String(v).padStart(2, '0')).join(':');
+}
+
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function getBaseUrl() {
+  const url = new URL(location.href);
+  url.hash = '';
+  url.search = '';
+  url.pathname = url.pathname.replace(/\/[^/]*$/, '/');
+  return url.toString();
+}
+
+function downloadBlob(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function blobToBase64(blob) {
   return new Promise((res) => {
-    const url = URL.createObjectURL(file);
-    const v = document.createElement('video');
-    v.preload = 'metadata';
-    v.src = url;
-    v.muted = true;
-    v.playsInline = true;
-    v.addEventListener('loadeddata', () => {
-      v.currentTime = 0.1;
-    });
-    v.addEventListener('seeked', () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = 320; canvas.height = 180;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-      const data = canvas.toDataURL('image/jpeg', 0.7);
-      URL.revokeObjectURL(url);
-      res(data);
-    });
-    setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(e){}; res(null); }, 3000);
+    const reader = new FileReader();
+    reader.onload = () => res(reader.result.split(',')[1]);
+    reader.readAsDataURL(blob);
   });
 }
 
-function getVideoDuration(file){
+function base64ToBlob(base64, type) {
+  const bin = atob(base64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type });
+}
+
+function base64ToText(base64) {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+function textToBase64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+async function getVideoDuration(file) {
   return new Promise((res) => {
     const url = URL.createObjectURL(file);
     const v = document.createElement('video');
@@ -141,42 +212,98 @@ function getVideoDuration(file){
       URL.revokeObjectURL(url);
       res(d);
     };
-    v.onerror = () => { URL.revokeObjectURL(url); res(0); };
+    v.onerror = () => {
+      URL.revokeObjectURL(url);
+      res(0);
+    };
   });
 }
 
-async function addFiles(files){
-  for(const f of files){
-    if(f.type !== 'video/mp4') continue;
+async function generateThumbnail(file) {
+  return new Promise((res) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.src = url;
+    v.muted = true;
+    v.playsInline = true;
+
+    v.addEventListener('loadeddata', () => {
+      v.currentTime = 0.1;
+    });
+
+    v.addEventListener('seeked', () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 180;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+      const data = canvas.toDataURL('image/jpeg', 0.7);
+      URL.revokeObjectURL(url);
+      res(data);
+    });
+
+    setTimeout(() => {
+      try { URL.revokeObjectURL(url); } catch (e) {}
+      res(null);
+    }, 3000);
+  });
+}
+
+async function ensureDefaultPlaylist() {
+  const pls = await loadAllPlaylists();
+  if (pls.length === 0) {
+    await idbPut(STORE_PLAYLISTS, { name: 'Default', items: [] });
+    currentPlaylist = 'Default';
+  } else if (!currentPlaylist) {
+    currentPlaylist = pls[0].name;
+  }
+}
+
+async function addFiles(files) {
+  await ensureDB();
+
+  for (const f of files) {
+    if (f.type !== 'video/mp4') continue;
+
     const id = uid();
     const duration = await getVideoDuration(f);
     const thumb = await generateThumbnail(f);
     const blob = f.slice(0, f.size, f.type);
-    const meta = { id, name: f.name, duration, blob, thumbnail: thumb, size: f.size };
+
+    const meta = {
+      id,
+      name: f.name,
+      duration,
+      blob,
+      thumbnail: thumb,
+      size: f.size
+    };
+
     await idbPut(STORE_VIDEOS, meta);
     videoListCache[id] = meta;
-    if(currentPlaylist){
-      const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
+
+    if (!currentPlaylist) {
+      await ensureDefaultPlaylist();
+    }
+
+    const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
+    if (pl) {
       pl.items.push(id);
       await idbPut(STORE_PLAYLISTS, pl);
-    } else {
-      const defaultName = 'Default';
-      let pl = await idbGet(STORE_PLAYLISTS, defaultName);
-      if(!pl){ pl = {name:defaultName, items:[]}; await idbPut(STORE_PLAYLISTS, pl); }
-      pl.items.push(id);
-      await idbPut(STORE_PLAYLISTS, pl);
-      currentPlaylist = defaultName;
     }
   }
+
   await refreshPlaylistsUI();
   await refreshTrackList();
-  updateTotalDuration();
+  await updateTotalDuration();
 }
 
-async function refreshPlaylistsUI(){
+async function refreshPlaylistsUI() {
   playlistsEl.innerHTML = '';
   const pls = await loadAllPlaylists();
-  for(const p of pls){
+
+  for (const p of pls) {
     const li = document.createElement('li');
     li.className = 'playlist-item';
     li.dataset.name = p.name;
@@ -185,26 +312,29 @@ async function refreshPlaylistsUI(){
     nameSpan.textContent = p.name;
     nameSpan.className = 'playlist-name';
     nameSpan.title = 'ダブルクリックで名前変更';
+
     nameSpan.addEventListener('click', async () => {
       currentPlaylist = p.name;
       currentIndex = 0;
       await refreshPlaylistsUI();
       await refreshTrackList();
-      updateTotalDuration();
+      await updateTotalDuration();
     });
+
     nameSpan.addEventListener('dblclick', async (e) => {
       e.stopPropagation();
       const newName = prompt('プレイリスト名を入力してください', p.name);
-      if(!newName) return;
+      if (!newName) return;
       const trimmed = newName.trim();
-      if(!trimmed) return alert('無効な名前です');
+      if (!trimmed) return alert('無効な名前です');
+
       try {
         await idbRenamePlaylist(p.name, trimmed);
-        if(currentPlaylist === p.name) currentPlaylist = trimmed;
+        if (currentPlaylist === p.name) currentPlaylist = trimmed;
         await refreshPlaylistsUI();
         await refreshTrackList();
       } catch (err) {
-        if(err.message === 'exists') alert('同名のプレイリストが既に存在します');
+        if (err.message === 'exists') alert('同名のプレイリストが既に存在します');
         else alert('名前変更に失敗しました');
       }
     });
@@ -212,55 +342,68 @@ async function refreshPlaylistsUI(){
     const delBtn = document.createElement('button');
     delBtn.className = 'small-btn';
     delBtn.textContent = '削除';
+
     delBtn.addEventListener('click', async (ev) => {
       ev.stopPropagation();
-      if(!confirm(`プレイリスト「${p.name}」を削除しますか？`)) return;
+      if (!confirm(`プレイリスト「${p.name}」を削除しますか？`)) return;
       await idbDelete(STORE_PLAYLISTS, p.name);
-      if(currentPlaylist === p.name) currentPlaylist = null;
+      if (currentPlaylist === p.name) currentPlaylist = null;
+      await ensureDefaultPlaylist();
       await refreshPlaylistsUI();
       await refreshTrackList();
-      updateTotalDuration();
+      await updateTotalDuration();
     });
 
     li.appendChild(nameSpan);
     li.appendChild(delBtn);
 
-    if(p.name === currentPlaylist) li.classList.add('active');
+    if (p.name === currentPlaylist) li.classList.add('active');
     playlistsEl.appendChild(li);
   }
 }
 
 createPlaylistBtn.addEventListener('click', async () => {
-  await openDB();
+  await ensureDB();
   const name = newPlaylistName.value.trim();
-  if(!name) return;
+  if (!name) return;
+
   const exists = await idbGet(STORE_PLAYLISTS, name);
-  if(exists) { alert('同名のプレイリストが既に存在します'); return; }
-  await idbPut(STORE_PLAYLISTS, {name, items:[]});
+  if (exists) {
+    alert('同名のプレイリストが既に存在します');
+    return;
+  }
+
+  await idbPut(STORE_PLAYLISTS, { name, items: [] });
   newPlaylistName.value = '';
   currentPlaylist = name;
+  currentIndex = 0;
   await refreshPlaylistsUI();
   await refreshTrackList();
+  await updateTotalDuration();
 });
 
-async function refreshTrackList(){
+async function refreshTrackList() {
   trackListEl.innerHTML = '';
-  if(!currentPlaylist) return;
+  if (!currentPlaylist) return;
+
   const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
-  if(!pl) return;
-  for(const id of pl.items){
-    if(!videoListCache[id]){
+  if (!pl) return;
+
+  for (const id of pl.items) {
+    if (!videoListCache[id]) {
       const v = await idbGet(STORE_VIDEOS, id);
-      if(v) videoListCache[id] = v;
+      if (v) videoListCache[id] = v;
     }
   }
-  for(let i=0;i<pl.items.length;i++){
+
+  for (let i = 0; i < pl.items.length; i++) {
     const id = pl.items[i];
     const meta = videoListCache[id];
-    if(!meta) continue;
+    if (!meta) continue;
+
     const li = document.createElement('li');
     li.className = 'track-item';
-    if(i === currentIndex) li.classList.add('playing');
+    if (i === currentIndex) li.classList.add('playing');
     li.dataset.index = i;
     li.dataset.id = id;
     li.draggable = true;
@@ -269,7 +412,7 @@ async function refreshTrackList(){
       <img class="thumb" src="${meta.thumbnail || ''}" alt="thumb" />
       <div class="meta">
         <div class="title">${meta.name}</div>
-        <div class="sub">${formatTime(meta.duration)} • ${Math.round(meta.size/1024/1024)} MB</div>
+        <div class="sub">${formatTime(meta.duration)} • ${Math.round(meta.size / 1024 / 1024)} MB</div>
       </div>
       <div class="track-actions">
         <button class="small-btn play-now">再生</button>
@@ -281,83 +424,94 @@ async function refreshTrackList(){
       e.dataTransfer.setData('text/plain', i.toString());
       li.classList.add('dragging');
     });
+
     li.addEventListener('dragend', () => {
       li.classList.remove('dragging');
     });
+
     li.addEventListener('dragover', (e) => {
       e.preventDefault();
       li.classList.add('drag-over');
     });
+
     li.addEventListener('dragleave', () => {
       li.classList.remove('drag-over');
     });
+
     li.addEventListener('drop', async (e) => {
       e.preventDefault();
       li.classList.remove('drag-over');
+
       const fromIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
       const toIndex = i;
-      if(isNaN(fromIndex)) return;
-      if(fromIndex === toIndex) return;
+      if (isNaN(fromIndex)) return;
+      if (fromIndex === toIndex) return;
+
       const pl2 = await idbGet(STORE_PLAYLISTS, currentPlaylist);
-      const item = pl2.items.splice(fromIndex,1)[0];
-      pl2.items.splice(toIndex,0,item);
+      if (!pl2) return;
+
+      const item = pl2.items.splice(fromIndex, 1)[0];
+      pl2.items.splice(toIndex, 0, item);
       await idbPut(STORE_PLAYLISTS, pl2);
-      if(currentIndex === fromIndex) currentIndex = toIndex;
-      else if(fromIndex < currentIndex && toIndex >= currentIndex) currentIndex--;
-      else if(fromIndex > currentIndex && toIndex <= currentIndex) currentIndex++;
+
+      if (currentIndex === fromIndex) currentIndex = toIndex;
+      else if (fromIndex < currentIndex && toIndex >= currentIndex) currentIndex--;
+      else if (fromIndex > currentIndex && toIndex <= currentIndex) currentIndex++;
+
       await refreshTrackList();
     });
 
-    li.querySelector('.play-now').addEventListener('click', () => {
+    li.querySelector('.play-now').addEventListener('click', async () => {
       currentIndex = i;
-      playCurrent();
-      refreshTrackList();
-    });
-    li.querySelector('.remove').addEventListener('click', async () => {
-      pl.items.splice(i,1);
-      await idbPut(STORE_PLAYLISTS, pl);
+      await playCurrent();
       await refreshTrackList();
-      updateTotalDuration();
     });
+
+    li.querySelector('.remove').addEventListener('click', async () => {
+      const pl2 = await idbGet(STORE_PLAYLISTS, currentPlaylist);
+      if (!pl2) return;
+      pl2.items.splice(i, 1);
+      await idbPut(STORE_PLAYLISTS, pl2);
+      if (currentIndex >= pl2.items.length) currentIndex = Math.max(0, pl2.items.length - 1);
+      await refreshTrackList();
+      await updateTotalDuration();
+    });
+
     trackListEl.appendChild(li);
   }
 }
 
-async function playCurrent(){
-  if(!currentPlaylist) return;
+async function getPlaylistLength() {
   const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
-  if(!pl || pl.items.length === 0) return;
-  if(playMode === 'shuffle'){
-    if(shuffleOrder.length !== pl.items.length) shuffleOrder = shuffleArray(pl.items.slice());
-    const id = shuffleOrder[currentIndex % shuffleOrder.length];
-    await loadAndPlayById(id);
-  } else if(playMode === 'random'){
-    const id = pl.items[Math.floor(Math.random()*pl.items.length)];
-    await loadAndPlayById(id);
-  } else {
-    const id = pl.items[currentIndex % pl.items.length];
-    await loadAndPlayById(id);
-  }
-  refreshTrackList();
+  return pl ? pl.items.length : 0;
 }
 
-async function loadAndPlayById(id){
+async function loadAndPlayById(id) {
   const meta = await idbGet(STORE_VIDEOS, id);
-  if(!meta) return;
-  if(!meta.blob) return;
+  if (!meta) return;
+  if (!meta.blob) {
+    alert('この動画はプレースホルダです。元ファイルを再追加してください。');
+    return;
+  }
 
-  const url = URL.createObjectURL(meta.blob);
-  videoPlayer.src = url;
+  if (currentObjectURL) {
+    try { URL.revokeObjectURL(currentObjectURL); } catch (e) {}
+    currentObjectURL = null;
+  }
+
+  currentObjectURL = URL.createObjectURL(meta.blob);
+  videoPlayer.src = currentObjectURL;
   videoPlayer.playbackRate = parseFloat(speedSelect.value);
 
   const vol = parseFloat(localStorage.getItem('playerVolume') || '1');
-  videoPlayer.volume = vol;
+  videoPlayer.volume = isFinite(vol) ? vol : 1;
 
-  try { await videoPlayer.play(); } catch(e){}
+  try {
+    await videoPlayer.play();
+  } catch (e) {}
 
   if (window.electronAPI) {
-    const cleanTitle = meta.name.replace(/\.[^/.]+$/, "");
-
+    const cleanTitle = meta.name.replace(/\.[^/.]+$/, '');
     window.electronAPI.setRPC({
       title: cleanTitle,
       playlist: currentPlaylist,
@@ -368,67 +522,45 @@ async function loadAndPlayById(id){
   }
 
   videoPlayer.onended = async () => {
-    currentIndex = (currentIndex + 1) % (await getPlaylistLength());
-    await playCurrent();
-  };
-}
-
-function throttle(fn, wait){
-  let last = 0;
-  return function(...args){
-    const now = Date.now();
-    if(now - last > wait){ last = now; fn(...args); }
-  };
-}
-
-async function getPlaylistLength(){
-  const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
-  return pl ? pl.items.length : 0;
-}
-
-playPauseBtn.addEventListener('click', () => {
-  if(videoPlayer.paused){
-    videoPlayer.play();
-  } else {
-    videoPlayer.pause();
-
-    if (window.electronAPI) {
-      window.electronAPI.setRPC({
-        paused: true
-      });
+    const len = await getPlaylistLength();
+    if (len > 0) {
+      currentIndex = (currentIndex + 1) % len;
+      await playCurrent();
     }
-  }
-});
-prevBtn.addEventListener('click', async () => {
-  if(playMode === 'random'){ await playCurrent(); return; }
-  currentIndex = (currentIndex - 1 + (await getPlaylistLength())) % (await getPlaylistLength());
-  await playCurrent();
-});
-nextBtn.addEventListener('click', async () => {
-  if(playMode === 'random'){ await playCurrent(); return; }
-  currentIndex = (currentIndex + 1) % (await getPlaylistLength());
-  await playCurrent();
-});
-
-orderBtn.addEventListener('click', ()=>{ setMode('order'); });
-shuffleBtn.addEventListener('click', ()=>{ setMode('shuffle'); });
-randomBtn.addEventListener('click', ()=>{ setMode('random'); });
-
-function setMode(m){
-  playMode = m;
-  orderBtn.classList.toggle('active', m==='order');
-  shuffleBtn.classList.toggle('active', m==='shuffle');
-  randomBtn.classList.toggle('active', m==='random');
-  if(m==='shuffle') shuffleOrder = [];
+  };
 }
 
-speedSelect.addEventListener('change', () => {
-  videoPlayer.playbackRate = parseFloat(speedSelect.value);
-});
+async function playCurrent() {
+  if (!currentPlaylist) return;
+  const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
+  if (!pl || pl.items.length === 0) return;
 
-function createVolumeControls(){
+  let id;
+  if (playMode === 'shuffle') {
+    if (shuffleOrder.length !== pl.items.length) shuffleOrder = shuffleArray(pl.items.slice());
+    id = shuffleOrder[currentIndex % shuffleOrder.length];
+  } else if (playMode === 'random') {
+    id = pl.items[Math.floor(Math.random() * pl.items.length)];
+  } else {
+    id = pl.items[currentIndex % pl.items.length];
+  }
+
+  await loadAndPlayById(id);
+  await refreshTrackList();
+}
+
+function setMode(m) {
+  playMode = m;
+  orderBtn.classList.toggle('active', m === 'order');
+  shuffleBtn.classList.toggle('active', m === 'shuffle');
+  randomBtn.classList.toggle('active', m === 'random');
+  if (m === 'shuffle') shuffleOrder = [];
+}
+
+function createVolumeControls() {
   const playerControls = document.querySelector('.player-controls');
-  if(!playerControls) return;
+  if (!playerControls) return;
+  if (document.querySelector('.volume-controls')) return;
 
   const volWrap = document.createElement('div');
   volWrap.className = 'volume-controls';
@@ -452,11 +584,10 @@ function createVolumeControls(){
   const volLabel = document.createElement('div');
   volLabel.style.color = 'var(--muted)';
   volLabel.style.fontSize = '13px';
-  volLabel.textContent = '100%';
 
   const saved = parseFloat(localStorage.getItem('playerVolume'));
   const initVol = isFinite(saved) ? saved : 1;
-  volSlider.value = initVol;
+  volSlider.value = String(initVol);
   volLabel.textContent = Math.round(initVol * 100) + '%';
   videoPlayer.volume = initVol;
   muteBtn.textContent = initVol > 0 ? '🔊' : '🔇';
@@ -470,7 +601,7 @@ function createVolumeControls(){
   });
 
   muteBtn.addEventListener('click', () => {
-    if(videoPlayer.volume > 0){
+    if (videoPlayer.volume > 0) {
       volSlider.dataset.prev = volSlider.value;
       volSlider.value = 0;
       videoPlayer.volume = 0;
@@ -479,7 +610,7 @@ function createVolumeControls(){
       muteBtn.textContent = '🔇';
     } else {
       const prev = parseFloat(volSlider.dataset.prev || '1');
-      volSlider.value = prev;
+      volSlider.value = String(prev);
       videoPlayer.volume = prev;
       localStorage.setItem('playerVolume', String(prev));
       volLabel.textContent = Math.round(prev * 100) + '%';
@@ -490,260 +621,402 @@ function createVolumeControls(){
   volWrap.appendChild(muteBtn);
   volWrap.appendChild(volSlider);
   volWrap.appendChild(volLabel);
-
   playerControls.appendChild(volWrap);
 }
 
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
-dropZone.addEventListener('dragleave', e => { dropZone.classList.remove('drag'); });
+function generateQRCode(url, targetEl) {
+  if (!targetEl || typeof QRCode === 'undefined') return;
+  targetEl.innerHTML = '';
+  new QRCode(targetEl, {
+    text: url,
+    width: 180,
+    height: 180,
+    colorDark: '#1db954',
+    colorLight: '#121212',
+    correctLevel: QRCode.CorrectLevel.H
+  });
+}
+
+async function updateTotalDuration() {
+  if (!currentPlaylist) {
+    totalDurationEl.textContent = '00:00:00';
+    return;
+  }
+
+  const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
+  if (!pl) {
+    totalDurationEl.textContent = '00:00:00';
+    return;
+  }
+
+  let total = 0;
+  for (const id of pl.items) {
+    const meta = await idbGet(STORE_VIDEOS, id);
+    if (meta && meta.duration) total += meta.duration;
+  }
+
+  totalDurationEl.textContent = formatTime(total);
+}
+
+function ensureUniquePlaylistName(baseName) {
+  return new Promise(async (resolve) => {
+    const pls = await loadAllPlaylists();
+    const names = new Set(pls.map(p => p.name));
+
+    if (!names.has(baseName)) {
+      resolve(baseName);
+      return;
+    }
+
+    let i = 2;
+    while (names.has(`${baseName} (${i})`)) i++;
+    resolve(`${baseName} (${i})`);
+  });
+}
+
+async function buildSharePayload(playlistName) {
+  const pl = await idbGet(STORE_PLAYLISTS, playlistName);
+  if (!pl) return null;
+
+  const items = [];
+  for (const id of pl.items) {
+    const meta = await idbGet(STORE_VIDEOS, id);
+    if (!meta) continue;
+
+    const item = {
+      id: meta.id,
+      name: meta.name,
+      duration: meta.duration || 0,
+      size: meta.size || 0,
+      thumbnail: meta.thumbnail || null,
+      blobBase64: meta.blob ? await blobToBase64(meta.blob) : null
+    };
+
+    items.push(item);
+  }
+
+  return {
+    name: pl.name,
+    items
+  };
+}
+
+async function savePlaylistForSharing(playlistName) {
+  await ensureDB();
+
+  const payload = await buildSharePayload(playlistName);
+  if (!payload) return null;
+
+  const uuid = generateUUID();
+  await idbPut(STORE_SHARED, {
+    uuid,
+    data: textToBase64(JSON.stringify(payload)),
+    createdAt: Date.now()
+  });
+
+  return uuid;
+}
+
+async function generateShareLink(playlistName) {
+  const uuid = await savePlaylistForSharing(playlistName);
+  if (!uuid) return null;
+
+  const base = getBaseUrl();
+  return `${base}playlist/${uuid}`;
+}
+
+async function importSharedPayload(payload) {
+  if (!payload || !Array.isArray(payload.items)) return false;
+
+  const playlistName = await ensureUniquePlaylistName(payload.name || 'Shared');
+  const items = [];
+
+  for (const it of payload.items) {
+    const id = it.id || uid();
+
+    let blob = null;
+    if (it.blobBase64) {
+      blob = base64ToBlob(it.blobBase64, 'video/mp4');
+    }
+
+    const meta = {
+      id,
+      name: it.name || 'video',
+      duration: it.duration || 0,
+      blob,
+      thumbnail: it.thumbnail || null,
+      size: it.size || 0
+    };
+
+    await idbPut(STORE_VIDEOS, meta);
+    videoListCache[id] = meta;
+    items.push(id);
+  }
+
+  await idbPut(STORE_PLAYLISTS, { name: playlistName, items });
+  currentPlaylist = playlistName;
+  currentIndex = 0;
+
+  return true;
+}
+
+function getSharedUUIDFromLocation() {
+  const segments = location.pathname.split('/').filter(Boolean);
+  const idx = segments.indexOf('playlist');
+  if (idx !== -1 && segments[idx + 1]) return segments[idx + 1];
+
+  const hashMatch = location.hash.match(/^#share=([^&]+)/);
+  if (hashMatch) return hashMatch[1];
+
+  return null;
+}
+
+async function loadPlaylistFromUUID(uuid) {
+  await ensureDB();
+
+  const rec = await idbGet(STORE_SHARED, uuid);
+  if (!rec) return false;
+
+  const payload = JSON.parse(base64ToText(rec.data));
+  const ok = await importSharedPayload(payload);
+  if (!ok) return false;
+
+  await refreshPlaylistsUI();
+  await refreshTrackList();
+  await updateTotalDuration();
+
+  return true;
+}
+
+if (shareBtn) {
+  shareBtn.addEventListener('click', async () => {
+    try {
+      if (!currentPlaylist) return alert('プレイリストを選択してください');
+
+      const url = await generateShareLink(currentPlaylist);
+      if (!url) return alert('共有に失敗しました');
+
+      if (shareURL) shareURL.textContent = url;
+      if (qrCodeEl) generateQRCode(url, qrCodeEl);
+
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch (e) {}
+    } catch (err) {
+      alert('共有に失敗しました');
+      console.error(err);
+    }
+  });
+}
+
+playPauseBtn.addEventListener('click', () => {
+  if (videoPlayer.paused) {
+    videoPlayer.play();
+  } else {
+    videoPlayer.pause();
+    if (window.electronAPI) {
+      window.electronAPI.setRPC({ paused: true });
+    }
+  }
+});
+
+prevBtn.addEventListener('click', async () => {
+  const len = await getPlaylistLength();
+  if (len <= 0) return;
+
+  if (playMode === 'random') {
+    await playCurrent();
+    return;
+  }
+
+  currentIndex = (currentIndex - 1 + len) % len;
+  await playCurrent();
+});
+
+nextBtn.addEventListener('click', async () => {
+  const len = await getPlaylistLength();
+  if (len <= 0) return;
+
+  if (playMode === 'random') {
+    await playCurrent();
+    return;
+  }
+
+  currentIndex = (currentIndex + 1) % len;
+  await playCurrent();
+});
+
+orderBtn.addEventListener('click', () => setMode('order'));
+shuffleBtn.addEventListener('click', () => setMode('shuffle'));
+randomBtn.addEventListener('click', () => setMode('random'));
+
+speedSelect.addEventListener('change', () => {
+  videoPlayer.playbackRate = parseFloat(speedSelect.value);
+});
+
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag');
+});
+
+dropZone.addEventListener('dragleave', () => {
+  dropZone.classList.remove('drag');
+});
+
 dropZone.addEventListener('drop', async e => {
-  e.preventDefault(); dropZone.classList.remove('drag');
+  e.preventDefault();
+  dropZone.classList.remove('drag');
   const files = Array.from(e.dataTransfer.files);
   await addFiles(files);
 });
+
 fileInput.addEventListener('change', async e => {
-  await openDB();
   const files = Array.from(e.target.files);
   await addFiles(files);
   fileInput.value = '';
 });
 
 exportMetaBtn.addEventListener('click', async () => {
-  if(!currentPlaylist) return alert('プレイリストを選択してください');
+  if (!currentPlaylist) return alert('プレイリストを選択してください');
   const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
+  if (!pl) return;
+
   const exportObj = { name: pl.name, items: [] };
-  for(const id of pl.items){
+  for (const id of pl.items) {
     const meta = await idbGet(STORE_VIDEOS, id);
-    if(meta) exportObj.items.push({ id: meta.id, name: meta.name, duration: meta.duration, size: meta.size, thumbnail: meta.thumbnail });
+    if (meta) {
+      exportObj.items.push({
+        id: meta.id,
+        name: meta.name,
+        duration: meta.duration,
+        size: meta.size,
+        thumbnail: meta.thumbnail
+      });
+    }
   }
-  const blob = new Blob([JSON.stringify(exportObj)], {type:'application/json'});
+
+  const blob = new Blob([JSON.stringify(exportObj)], { type: 'application/json' });
   downloadBlob(blob, `${pl.name}.playlist.json`);
 });
 
 exportWithBlobsBtn.addEventListener('click', async () => {
-  if(!currentPlaylist) return alert('プレイリストを選択してください');
+  if (!currentPlaylist) return alert('プレイリストを選択してください');
   const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
+  if (!pl) return;
+
   const exportObj = { name: pl.name, items: [] };
-  for(const id of pl.items){
+  for (const id of pl.items) {
     const meta = await idbGet(STORE_VIDEOS, id);
-    if(meta){
-      const base = await blobToBase64(meta.blob);
-      exportObj.items.push({ id: meta.id, name: meta.name, duration: meta.duration, size: meta.size, thumbnail: meta.thumbnail, blobBase64: base });
+    if (meta) {
+      exportObj.items.push({
+        id: meta.id,
+        name: meta.name,
+        duration: meta.duration,
+        size: meta.size,
+        thumbnail: meta.thumbnail,
+        blobBase64: meta.blob ? await blobToBase64(meta.blob) : null
+      });
     }
   }
-  const blob = new Blob([JSON.stringify(exportObj)], {type:'application/json'});
+
+  const blob = new Blob([JSON.stringify(exportObj)], { type: 'application/json' });
   downloadBlob(blob, `${pl.name}.playlist.full.json`);
 });
 
 importFile.addEventListener('change', async (e) => {
   const f = e.target.files[0];
-  if(!f) return;
+  if (!f) return;
+
   const txt = await f.text();
-  try{
+
+  try {
     const obj = JSON.parse(txt);
-    if(!obj.name || !Array.isArray(obj.items)) throw new Error('invalid');
-    const name = obj.name + ' (import)';
+    if (!obj.name || !Array.isArray(obj.items)) throw new Error('invalid');
+
+    const name = await ensureUniquePlaylistName(obj.name + ' (import)');
     const items = [];
-    for(const it of obj.items){
-      if(it.blobBase64){
-        const blob = base64ToBlob(it.blobBase64, 'video/mp4');
-        const id = it.id || uid();
-        const meta = { id, name: it.name || 'video', duration: it.duration || 0, blob, thumbnail: it.thumbnail || null, size: it.size || 0 };
-        await idbPut(STORE_VIDEOS, meta);
-        items.push(id);
-      } else {
-        const id = it.id || uid();
-        const meta = { id, name: it.name || 'video', duration: it.duration || 0, blob: null, thumbnail: it.thumbnail || null, size: it.size || 0 };
-        await idbPut(STORE_VIDEOS, meta);
-        items.push(id);
+
+    for (const it of obj.items) {
+      const id = it.id || uid();
+
+      let blob = null;
+      if (it.blobBase64) {
+        blob = base64ToBlob(it.blobBase64, 'video/mp4');
       }
+
+      const meta = {
+        id,
+        name: it.name || 'video',
+        duration: it.duration || 0,
+        blob,
+        thumbnail: it.thumbnail || null,
+        size: it.size || 0
+      };
+
+      await idbPut(STORE_VIDEOS, meta);
+      videoListCache[id] = meta;
+      items.push(id);
     }
-    await idbPut(STORE_PLAYLISTS, {name, items});
+
+    await idbPut(STORE_PLAYLISTS, { name, items });
     currentPlaylist = name;
+    currentIndex = 0;
     await refreshPlaylistsUI();
     await refreshTrackList();
-    updateTotalDuration();
-  }catch(err){
+    await updateTotalDuration();
+  } catch (err) {
     alert('インポートに失敗しました');
   }
+
   importFile.value = '';
 });
 
-function downloadBlob(blob, filename){
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-}
-function blobToBase64(blob){
-  return new Promise((res) => {
-    const reader = new FileReader();
-    reader.onload = () => res(reader.result.split(',')[1]);
-    reader.readAsDataURL(blob);
-  });
-}
-function base64ToBlob(base64, type){
-  const bin = atob(base64);
-  const len = bin.length;
-  const arr = new Uint8Array(len);
-  for(let i=0;i<len;i++) arr[i] = bin.charCodeAt(i);
-  return new Blob([arr], {type});
-}
-
-function shuffleArray(arr){
-  for(let i=arr.length-1;i>0;i--){
-    const j = Math.floor(Math.random()*(i+1));
-    [arr[i],arr[j]] = [arr[j],arr[i]];
-  }
-  return arr;
-}
-
-async function updateTotalDuration(){
-  if(!currentPlaylist){ totalDurationEl.textContent = '00:00:00'; return; }
-  const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
-  let total = 0;
-  for(const id of pl.items){
-    const meta = await idbGet(STORE_VIDEOS, id);
-    if(meta && meta.duration) total += meta.duration;
-  }
-  totalDurationEl.textContent = formatTime(total);
-}
-
-(async function init(){
-  await openDB();
-  const vids = await idbGetAll(STORE_VIDEOS);
-  vids.forEach(v => videoListCache[v.id] = v);
-  const pls = await idbGetAll(STORE_PLAYLISTS);
-  if(pls.length === 0){
-    await idbPut(STORE_PLAYLISTS, {name:'Default', items:[]});
-    currentPlaylist = 'Default';
-  } else {
-    currentPlaylist = pls[0].name;
-  }
-  createVolumeControls();
-  await refreshPlaylistsUI();
-  await refreshTrackList();
-  updateTotalDuration();
-})();
-
 videoPlayer.addEventListener('play', async () => {
+  if (!currentPlaylist) return;
   const pl = await idbGet(STORE_PLAYLISTS, currentPlaylist);
-  if(!pl) return;
+  if (!pl) return;
   const id = pl.items[currentIndex];
   const meta = await idbGet(STORE_VIDEOS, id);
-  if(meta && !meta.blob){
+  if (meta && !meta.blob) {
     alert('この動画はプレースホルダです。元ファイルを再追加してください。');
     videoPlayer.pause();
   }
 });
 
-const menuToggle = document.getElementById('menuToggle');
-const sidebar = document.querySelector('.sidebar');
-const overlay = document.getElementById('overlay');
-
-if(menuToggle){
+if (menuToggle) {
   menuToggle.addEventListener('click', () => {
     sidebar.classList.toggle('open');
     overlay.classList.toggle('active');
   });
 }
 
-if(overlay){
+if (overlay) {
   overlay.addEventListener('click', () => {
     sidebar.classList.remove('open');
     overlay.classList.remove('active');
   });
 }
 
-function generateUUID() {
-  return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-  );
-}
+(async function init() {
+  await ensureDB();
 
-async function savePlaylistForSharing(playlistName) {
-  const pl = await idbGet(STORE_PLAYLISTS, playlistName);
-  if(!pl) return null;
+  const vids = await idbGetAll(STORE_VIDEOS);
+  vids.forEach(v => videoListCache[v.id] = v);
 
-  const uuid = generateUUID();
-  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(pl))));
+  await ensureDefaultPlaylist();
 
-  if(!db.objectStoreNames.contains('sharedPlaylists')){
-    db.close();
-    const req = indexedDB.open(DB_NAME, DB_VERSION+1);
-    req.onupgradeneeded = e => {
-      const idb = e.target.result;
-      idb.createObjectStore('sharedPlaylists', {keyPath:'uuid'});
-    };
-    req.onsuccess = e => {
-      db = e.target.result;
-      savePlaylistForSharing(playlistName);
-    };
-    return;
-  }
-
-  await new Promise((res, rej) => {
-    const store = db.transaction('sharedPlaylists', 'readwrite').objectStore('sharedPlaylists');
-    const r = store.put({uuid, data: encoded});
-    r.onsuccess = () => res();
-    r.onerror = e => rej(e);
-  });
-
-  return uuid;
-}
-
-async function generateShareLink(playlistName){
-  const uuid = await savePlaylistForSharing(playlistName);
-  if(!uuid) return null;
-  return `${location.origin}/playlist/${uuid}`;
-}
-
-function generateQRCode(url, targetEl){
-  targetEl.innerHTML = '';
-  new QRCode(targetEl, {
-    text: url,
-    width: 180,
-    height: 180,
-    colorDark: "#1db954",
-    colorLight: "#121212",
-    correctLevel: QRCode.CorrectLevel.H
-  });
-}
-
-document.getElementById('shareBtn').addEventListener('click', async () => {
-  const playlistName = currentPlaylist;
-  const url = await generateShareLink(playlistName);
-  if(!url) return alert('共有に失敗しました');
-
-  const urlDiv = document.getElementById('shareURL');
-  urlDiv.textContent = url;
-
-  const qrDiv = document.getElementById('qrCode');
-  generateQRCode(url, qrDiv);
-});
-
-async function loadPlaylistFromUUID(uuid){
-  if(!db) await openDB();
-  const plRecord = await new Promise((res, rej) => {
-    const store = db.transaction('sharedPlaylists','readonly').objectStore('sharedPlaylists');
-    const r = store.get(uuid);
-    r.onsuccess = () => res(r.result);
-    r.onerror = e => rej(e);
-  });
-  if(!plRecord) return false;
-
-  const data = JSON.parse(decodeURIComponent(escape(atob(plRecord.data))));
-  await idbPut(STORE_PLAYLISTS, data);
-  currentPlaylist = data.name + ' (共有)';
+  createVolumeControls();
   await refreshPlaylistsUI();
   await refreshTrackList();
-  return true;
-}
+  await updateTotalDuration();
 
-window.addEventListener('load', async () => {
-  const path = location.pathname.split('/');
-  if(path[1]==='playlist' && path[2]){
-    await loadPlaylistFromUUID(path[2]);
+  const uuid = getSharedUUIDFromLocation();
+  if (uuid) {
+    const loaded = await loadPlaylistFromUUID(uuid);
+    if (loaded) {
+      await refreshPlaylistsUI();
+      await refreshTrackList();
+      await updateTotalDuration();
+    }
   }
-});
+})();
