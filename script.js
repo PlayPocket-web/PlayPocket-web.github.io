@@ -653,3 +653,95 @@ if(overlay){
     overlay.classList.remove('active');
   });
 }
+
+function generateUUID() {
+  return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+  );
+}
+
+async function savePlaylistForSharing(playlistName) {
+  const pl = await idbGet(STORE_PLAYLISTS, playlistName);
+  if(!pl) return null;
+
+  const uuid = generateUUID();
+  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(pl))));
+
+  if(!db.objectStoreNames.contains('sharedPlaylists')){
+    db.close();
+    const req = indexedDB.open(DB_NAME, DB_VERSION+1);
+    req.onupgradeneeded = e => {
+      const idb = e.target.result;
+      idb.createObjectStore('sharedPlaylists', {keyPath:'uuid'});
+    };
+    req.onsuccess = e => {
+      db = e.target.result;
+      savePlaylistForSharing(playlistName);
+    };
+    return;
+  }
+
+  await new Promise((res, rej) => {
+    const store = db.transaction('sharedPlaylists', 'readwrite').objectStore('sharedPlaylists');
+    const r = store.put({uuid, data: encoded});
+    r.onsuccess = () => res();
+    r.onerror = e => rej(e);
+  });
+
+  return uuid;
+}
+
+async function generateShareLink(playlistName){
+  const uuid = await savePlaylistForSharing(playlistName);
+  if(!uuid) return null;
+  return `${location.origin}/playlist/${uuid}`;
+}
+
+function generateQRCode(url, targetEl){
+  targetEl.innerHTML = '';
+  new QRCode(targetEl, {
+    text: url,
+    width: 180,
+    height: 180,
+    colorDark: "#1db954",
+    colorLight: "#121212",
+    correctLevel: QRCode.CorrectLevel.H
+  });
+}
+
+document.getElementById('shareBtn').addEventListener('click', async () => {
+  const playlistName = currentPlaylist;
+  const url = await generateShareLink(playlistName);
+  if(!url) return alert('共有に失敗しました');
+
+  const urlDiv = document.getElementById('shareURL');
+  urlDiv.textContent = url;
+
+  const qrDiv = document.getElementById('qrCode');
+  generateQRCode(url, qrDiv);
+});
+
+async function loadPlaylistFromUUID(uuid){
+  if(!db) await openDB();
+  const plRecord = await new Promise((res, rej) => {
+    const store = db.transaction('sharedPlaylists','readonly').objectStore('sharedPlaylists');
+    const r = store.get(uuid);
+    r.onsuccess = () => res(r.result);
+    r.onerror = e => rej(e);
+  });
+  if(!plRecord) return false;
+
+  const data = JSON.parse(decodeURIComponent(escape(atob(plRecord.data))));
+  await idbPut(STORE_PLAYLISTS, data);
+  currentPlaylist = data.name + ' (共有)';
+  await refreshPlaylistsUI();
+  await refreshTrackList();
+  return true;
+}
+
+window.addEventListener('load', async () => {
+  const path = location.pathname.split('/');
+  if(path[1]==='playlist' && path[2]){
+    await loadPlaylistFromUUID(path[2]);
+  }
+});
