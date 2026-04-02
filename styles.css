@@ -328,6 +328,7 @@ body{
 }
 
 .track-item.dragging{ opacity:0.5; }
+
 .track-item.drag-over{
   outline:2px dashed rgba(255,255,255,0.06);
   background:rgba(255,255,255,0.01);
@@ -352,6 +353,48 @@ body{
   background:linear-gradient(90deg,var(--accent),#444);
   height:6px;
   border-radius:6px;
+}
+
+/* Share section */
+.share-section{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-width:220px;
+  max-width:280px;
+  padding:8px 10px;
+  border-radius:8px;
+  background:rgba(255,255,255,0.03);
+  border:1px solid rgba(255,255,255,0.04);
+}
+
+.share-section .small-btn{
+  width:100%;
+}
+
+.share-url{
+  min-height:20px;
+  font-size:13px;
+  color:var(--muted);
+  word-break:break-all;
+  line-height:1.4;
+}
+
+.qr-code{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  padding:8px;
+  border-radius:8px;
+  background:#0d0d0d;
+  min-height:180px;
+}
+
+.qr-code canvas,
+.qr-code img{
+  max-width:100%;
+  height:auto;
+  display:block;
 }
 
 /* Android / portrait */
@@ -445,6 +488,16 @@ body{
   .volume-controls input[type="range"]{
     width:min(100%, 220px);
   }
+
+  .share-section{
+    width:100%;
+    max-width:none;
+    min-width:0;
+  }
+
+  .qr-code{
+    min-height:160px;
+  }
 }
 
 /* Very small screens */
@@ -479,6 +532,14 @@ body{
   .small-btn{
     padding:6px 8px;
   }
+
+  .share-section{
+    padding:8px;
+  }
+
+  .qr-code{
+    min-height:140px;
+  }
 }
 
 .visually-hidden{
@@ -503,7 +564,6 @@ body{
 }
 
 @media (orientation: portrait), (max-width: 900px){
-
   .menu-btn{
     display:block;
   }
