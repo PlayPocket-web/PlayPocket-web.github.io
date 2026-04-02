@@ -4,7 +4,7 @@ const STORE_VIDEOS = 'videos';
 const STORE_PLAYLISTS = 'playlists';
 const STORE_SHARED = 'sharedPlaylists';
 
-let db;
+let db = null;
 let currentPlaylist = null;
 let currentIndex = 0;
 let playMode = 'order';
@@ -39,10 +39,6 @@ const menuToggle = document.getElementById('menuToggle');
 const sidebar = document.querySelector('.sidebar');
 const overlay = document.getElementById('overlay');
 
-async function loadAllPlaylists() {
-  return await idbGetAll(STORE_PLAYLISTS);
-}
-
 function openDB() {
   return new Promise((res, rej) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -75,9 +71,9 @@ async function ensureDB() {
   return await openDB();
 }
 
-function idbPut(store, value) {
+async function idbPut(store, value) {
+  await ensureDB();
   return new Promise((res, rej) => {
-    if (!db) return rej(new Error('DB not initialized'));
     const tx = db.transaction(store, 'readwrite');
     const s = tx.objectStore(store);
     const r = s.put(value);
@@ -86,9 +82,9 @@ function idbPut(store, value) {
   });
 }
 
-function idbGet(store, key) {
+async function idbGet(store, key) {
+  await ensureDB();
   return new Promise((res, rej) => {
-    if (!db) return rej(new Error('DB not initialized'));
     const tx = db.transaction(store, 'readonly');
     const s = tx.objectStore(store);
     const r = s.get(key);
@@ -97,9 +93,9 @@ function idbGet(store, key) {
   });
 }
 
-function idbGetAll(store) {
+async function idbGetAll(store) {
+  await ensureDB();
   return new Promise((res, rej) => {
-    if (!db) return rej(new Error('DB not initialized'));
     const tx = db.transaction(store, 'readonly');
     const s = tx.objectStore(store);
     const r = s.getAll();
@@ -108,15 +104,19 @@ function idbGetAll(store) {
   });
 }
 
-function idbDelete(store, key) {
+async function idbDelete(store, key) {
+  await ensureDB();
   return new Promise((res, rej) => {
-    if (!db) return rej(new Error('DB not initialized'));
     const tx = db.transaction(store, 'readwrite');
     const s = tx.objectStore(store);
     const r = s.delete(key);
     r.onsuccess = () => res();
     r.onerror = e => rej(e);
   });
+}
+
+async function loadAllPlaylists() {
+  return await idbGetAll(STORE_PLAYLISTS);
 }
 
 async function idbRenamePlaylist(oldName, newName) {
@@ -489,6 +489,7 @@ async function getPlaylistLength() {
 async function loadAndPlayById(id) {
   const meta = await idbGet(STORE_VIDEOS, id);
   if (!meta) return;
+
   if (!meta.blob) {
     alert('この動画はプレースホルダです。元ファイルを再追加してください。');
     return;
@@ -658,20 +659,15 @@ async function updateTotalDuration() {
   totalDurationEl.textContent = formatTime(total);
 }
 
-function ensureUniquePlaylistName(baseName) {
-  return new Promise(async (resolve) => {
-    const pls = await loadAllPlaylists();
-    const names = new Set(pls.map(p => p.name));
+async function ensureUniquePlaylistName(baseName) {
+  const pls = await loadAllPlaylists();
+  const names = new Set(pls.map(p => p.name));
 
-    if (!names.has(baseName)) {
-      resolve(baseName);
-      return;
-    }
+  if (!names.has(baseName)) return baseName;
 
-    let i = 2;
-    while (names.has(`${baseName} (${i})`)) i++;
-    resolve(`${baseName} (${i})`);
-  });
+  let i = 2;
+  while (names.has(`${baseName} (${i})`)) i++;
+  return `${baseName} (${i})`;
 }
 
 async function buildSharePayload(playlistName) {
@@ -683,16 +679,14 @@ async function buildSharePayload(playlistName) {
     const meta = await idbGet(STORE_VIDEOS, id);
     if (!meta) continue;
 
-    const item = {
+    items.push({
       id: meta.id,
       name: meta.name,
       duration: meta.duration || 0,
       size: meta.size || 0,
       thumbnail: meta.thumbnail || null,
       blobBase64: meta.blob ? await blobToBase64(meta.blob) : null
-    };
-
-    items.push(item);
+    });
   }
 
   return {
@@ -702,8 +696,6 @@ async function buildSharePayload(playlistName) {
 }
 
 async function savePlaylistForSharing(playlistName) {
-  await ensureDB();
-
   const payload = await buildSharePayload(playlistName);
   if (!payload) return null;
 
@@ -756,7 +748,6 @@ async function importSharedPayload(payload) {
   await idbPut(STORE_PLAYLISTS, { name: playlistName, items });
   currentPlaylist = playlistName;
   currentIndex = 0;
-
   return true;
 }
 
@@ -772,8 +763,6 @@ function getSharedUUIDFromLocation() {
 }
 
 async function loadPlaylistFromUUID(uuid) {
-  await ensureDB();
-
   const rec = await idbGet(STORE_SHARED, uuid);
   if (!rec) return false;
 
@@ -784,7 +773,6 @@ async function loadPlaylistFromUUID(uuid) {
   await refreshPlaylistsUI();
   await refreshTrackList();
   await updateTotalDuration();
-
   return true;
 }
 
@@ -803,8 +791,8 @@ if (shareBtn) {
         await navigator.clipboard.writeText(url);
       } catch (e) {}
     } catch (err) {
-      alert('共有に失敗しました');
       console.error(err);
+      alert('共有に失敗しました');
     }
   });
 }
@@ -1004,7 +992,6 @@ if (overlay) {
   vids.forEach(v => videoListCache[v.id] = v);
 
   await ensureDefaultPlaylist();
-
   createVolumeControls();
   await refreshPlaylistsUI();
   await refreshTrackList();
