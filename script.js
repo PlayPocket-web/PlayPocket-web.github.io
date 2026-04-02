@@ -201,6 +201,27 @@ function textToBase64(text) {
   return btoa(bin);
 }
 
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch (err) {}
+    document.body.removeChild(ta);
+    return ok;
+  }
+}
+
 async function getVideoDuration(file) {
   return new Promise((res) => {
     const url = URL.createObjectURL(file);
@@ -752,12 +773,22 @@ async function importSharedPayload(payload) {
 }
 
 function getSharedUUIDFromLocation() {
+  const routed = sessionStorage.getItem('ppSharedRoute');
+  if (routed) {
+    sessionStorage.removeItem('ppSharedRoute');
+    const m = routed.match(/\/playlist\/([^/?#]+)/);
+    if (m) return decodeURIComponent(m[1]);
+  }
+
   const segments = location.pathname.split('/').filter(Boolean);
   const idx = segments.indexOf('playlist');
-  if (idx !== -1 && segments[idx + 1]) return segments[idx + 1];
+  if (idx !== -1 && segments[idx + 1]) return decodeURIComponent(segments[idx + 1]);
 
   const hashMatch = location.hash.match(/^#share=([^&]+)/);
-  if (hashMatch) return hashMatch[1];
+  if (hashMatch) return decodeURIComponent(hashMatch[1]);
+
+  const queryMatch = location.search.match(/[?&]share=([^&]+)/);
+  if (queryMatch) return decodeURIComponent(queryMatch[1]);
 
   return null;
 }
@@ -787,9 +818,14 @@ if (shareBtn) {
       if (shareURL) shareURL.textContent = url;
       if (qrCodeEl) generateQRCode(url, qrCodeEl);
 
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch (e) {}
+      const copied = await copyText(url);
+      if (copied) {
+        const old = shareBtn.textContent;
+        shareBtn.textContent = 'コピーしました';
+        setTimeout(() => {
+          shareBtn.textContent = old;
+        }, 1500);
+      }
     } catch (err) {
       console.error(err);
       alert('共有に失敗しました');
