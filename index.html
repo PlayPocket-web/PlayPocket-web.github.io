@@ -51,6 +51,13 @@
                     <button id="prevBtn" class="small-btn" aria-label="前のトラック">◀◀</button>
                     <button id="playPauseBtn" class="small-btn" aria-label="再生/一時停止">▶/Ⅱ</button>
                     <button id="nextBtn" class="small-btn" aria-label="次のトラック">▶▶</button>
+                <div id="shareSection">
+                    <button id="shareBtn">プレイリストを共有</button>
+                    <div id="shareURL" style="margin-top:10px; word-break: break-all;"></div>
+                    <div id="qrCode" style="margin-top:10px;"></div>
+                </div>
+
+                <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
                     <label for="speedSelect" class="visually-hidden">再生速度</label>
                     <label class="speed-label">速度
