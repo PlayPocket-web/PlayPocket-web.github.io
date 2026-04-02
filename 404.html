@@ -1,46 +1,25 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="icon" type="image/png" href="icon.png">
-  <title>404 Not Found</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: sans-serif;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      background: #121212;
-      color: #fff;
-      text-align: center;
-    }
-    h1 {
-      font-size: 4rem;
-      margin: 0.5rem 0;
-    }
-    p {
-      font-size: 1.2rem;
-      margin: 1rem 0;
-    }
-    a {
-      color: #1db954;
-      text-decoration: none;
-      font-weight: bold;
-      border-bottom: 1px solid #1db954;
-    }
-    a:hover {
-      color: #1fff7f;
-      border-color: #1fff7f;
-    }
-  </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Redirecting...</title>
 </head>
 <body>
-  <h1>404 Not Found</h1>
-  <p>ページが見つかりませんでした。</p>
-  <p><a href="/">ホームに戻る</a></p>
+  <p>読み込み中...</p>
+  <p><a href="../index.html">ホームへ戻る</a></p>
+
+  <script>
+    (function () {
+      try {
+        sessionStorage.setItem('ppSharedRoute', location.pathname + location.search + location.hash);
+      } catch (e) {}
+      location.replace('../index.html');
+    })();
+  </script>
+
+  <noscript>
+    <p>JavaScript が無効です。</p>
+  </noscript>
 </body>
 </html>
