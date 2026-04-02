@@ -231,6 +231,7 @@ async function refreshPlaylistsUI(){
 }
 
 createPlaylistBtn.addEventListener('click', async () => {
+  await openDB();
   const name = newPlaylistName.value.trim();
   if(!name) return;
   const exists = await idbGet(STORE_PLAYLISTS, name);
@@ -501,6 +502,7 @@ dropZone.addEventListener('drop', async e => {
   await addFiles(files);
 });
 fileInput.addEventListener('change', async e => {
+  await openDB();
   const files = Array.from(e.target.files);
   await addFiles(files);
   fileInput.value = '';
