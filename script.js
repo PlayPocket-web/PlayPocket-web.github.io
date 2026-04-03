@@ -2,7 +2,6 @@ const DB_NAME = 'offline-playlist-db';
 const DB_VERSION = 2;
 const STORE_VIDEOS = 'videos';
 const STORE_PLAYLISTS = 'playlists';
-const STORE_SHARED = 'sharedPlaylists';
 
 let db = null;
 let currentPlaylist = null;
@@ -33,7 +32,6 @@ const importFile = document.getElementById('importFile');
 
 const shareBtn = document.getElementById('shareBtn');
 const shareURL = document.getElementById('shareURL');
-const qrCodeEl = document.getElementById('qrCode');
 
 const menuToggle = document.getElementById('menuToggle');
 const sidebar = document.querySelector('.sidebar');
@@ -51,9 +49,6 @@ function openDB() {
       }
       if (!idb.objectStoreNames.contains(STORE_PLAYLISTS)) {
         idb.createObjectStore(STORE_PLAYLISTS, { keyPath: 'name' });
-      }
-      if (!idb.objectStoreNames.contains(STORE_SHARED)) {
-        idb.createObjectStore(STORE_SHARED, { keyPath: 'uuid' });
       }
     };
 
@@ -134,12 +129,6 @@ function uid() {
   return 'id-' + Math.random().toString(36).slice(2, 10);
 }
 
-function generateUUID() {
-  return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c =>
-    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-  );
-}
-
 function formatTime(sec) {
   if (!isFinite(sec)) return '00:00:00';
   const h = Math.floor(sec / 3600);
@@ -157,11 +146,7 @@ function shuffleArray(arr) {
 }
 
 function getBaseUrl() {
-  const url = new URL(location.href);
-  url.hash = '';
-  url.search = '';
-  url.pathname = url.pathname.replace(/\/[^/]*$/, '/');
-  return url.toString();
+  return new URL('./', location.href).href;
 }
 
 function downloadBlob(blob, filename) {
@@ -187,18 +172,20 @@ function base64ToBlob(base64, type) {
   return new Blob([arr], { type });
 }
 
-function base64ToText(base64) {
-  const bin = atob(base64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
-}
-
-function textToBase64(text) {
+function textToBase64Url(text) {
   const bytes = new TextEncoder().encode(text);
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlToText(base64url) {
+  let s = base64url.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
 }
 
 async function copyText(text) {
@@ -646,19 +633,6 @@ function createVolumeControls() {
   playerControls.appendChild(volWrap);
 }
 
-function generateQRCode(url, targetEl) {
-  if (!targetEl || typeof QRCode === 'undefined') return;
-  targetEl.innerHTML = '';
-  new QRCode(targetEl, {
-    text: url,
-    width: 180,
-    height: 180,
-    colorDark: '#1db954',
-    colorLight: '#121212',
-    correctLevel: QRCode.CorrectLevel.H
-  });
-}
-
 async function updateTotalDuration() {
   if (!currentPlaylist) {
     totalDurationEl.textContent = '00:00:00';
@@ -716,26 +690,30 @@ async function buildSharePayload(playlistName) {
   };
 }
 
-async function savePlaylistForSharing(playlistName) {
+async function generateShareLink(playlistName) {
   const payload = await buildSharePayload(playlistName);
   if (!payload) return null;
 
-  const uuid = generateUUID();
-  await idbPut(STORE_SHARED, {
-    uuid,
-    data: textToBase64(JSON.stringify(payload)),
-    createdAt: Date.now()
-  });
+  const token = textToBase64Url(JSON.stringify(payload));
+  const url = `${getBaseUrl()}#share=${token}`;
 
-  return uuid;
+  if (url.length > 180000) {
+    throw new Error('payload too large');
+  }
+
+  return url;
 }
 
-async function generateShareLink(playlistName) {
-  const uuid = await savePlaylistForSharing(playlistName);
-  if (!uuid) return null;
+function getSharedPayloadFromLocation() {
+  const m = location.hash.match(/^#share=([^&]+)/);
+  if (!m) return null;
 
-  const base = getBaseUrl();
-  return `${base}playlist/${uuid}`;
+  try {
+    const json = base64UrlToText(decodeURIComponent(m[1]));
+    return JSON.parse(json);
+  } catch (e) {
+    return null;
+  }
 }
 
 async function importSharedPayload(payload) {
@@ -772,39 +750,10 @@ async function importSharedPayload(payload) {
   return true;
 }
 
-function getSharedUUIDFromLocation() {
-  const routed = sessionStorage.getItem('ppSharedRoute');
-  if (routed) {
-    sessionStorage.removeItem('ppSharedRoute');
-    const m = routed.match(/\/playlist\/([^/?#]+)/);
-    if (m) return decodeURIComponent(m[1]);
-  }
-
-  const segments = location.pathname.split('/').filter(Boolean);
-  const idx = segments.indexOf('playlist');
-  if (idx !== -1 && segments[idx + 1]) return decodeURIComponent(segments[idx + 1]);
-
-  const hashMatch = location.hash.match(/^#share=([^&]+)/);
-  if (hashMatch) return decodeURIComponent(hashMatch[1]);
-
-  const queryMatch = location.search.match(/[?&]share=([^&]+)/);
-  if (queryMatch) return decodeURIComponent(queryMatch[1]);
-
-  return null;
-}
-
-async function loadPlaylistFromUUID(uuid) {
-  const rec = await idbGet(STORE_SHARED, uuid);
-  if (!rec) return false;
-
-  const payload = JSON.parse(base64ToText(rec.data));
-  const ok = await importSharedPayload(payload);
-  if (!ok) return false;
-
-  await refreshPlaylistsUI();
-  await refreshTrackList();
-  await updateTotalDuration();
-  return true;
+async function loadSharedPayloadFromLocation() {
+  const payload = getSharedPayloadFromLocation();
+  if (!payload) return false;
+  return await importSharedPayload(payload);
 }
 
 if (shareBtn) {
@@ -816,7 +765,6 @@ if (shareBtn) {
       if (!url) return alert('共有に失敗しました');
 
       if (shareURL) shareURL.textContent = url;
-      if (qrCodeEl) generateQRCode(url, qrCodeEl);
 
       const copied = await copyText(url);
       if (copied) {
@@ -828,7 +776,11 @@ if (shareBtn) {
       }
     } catch (err) {
       console.error(err);
-      alert('共有に失敗しました');
+      if (String(err && err.message) === 'payload too large') {
+        alert('プレイリストが大きすぎてURLに収まりません。動画ファイルの共有には外部保存先が必要です。');
+      } else {
+        alert('共有に失敗しました');
+      }
     }
   });
 }
@@ -1033,13 +985,10 @@ if (overlay) {
   await refreshTrackList();
   await updateTotalDuration();
 
-  const uuid = getSharedUUIDFromLocation();
-  if (uuid) {
-    const loaded = await loadPlaylistFromUUID(uuid);
-    if (loaded) {
-      await refreshPlaylistsUI();
-      await refreshTrackList();
-      await updateTotalDuration();
-    }
+  const loaded = await loadSharedPayloadFromLocation();
+  if (loaded) {
+    await refreshPlaylistsUI();
+    await refreshTrackList();
+    await updateTotalDuration();
   }
 })();
