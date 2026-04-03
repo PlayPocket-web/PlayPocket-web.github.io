@@ -991,3 +991,44 @@ if (overlay) {
     await updateTotalDuration();
   }
 })();
+
+function encodeSharePayload(payload) {
+  const json = JSON.stringify(payload);
+  return LZString.compressToEncodedURIComponent(json);
+}
+
+function decodeSharePayload(token) {
+  try {
+    const json = LZString.decompressFromEncodedURIComponent(token);
+    if (!json) return null;
+    return JSON.parse(json);
+  } catch (e) {
+    return null;
+  }
+}
+
+async function generateShareLink(playlistName) {
+  const payload = await buildSharePayload(playlistName);
+  if (!payload) return null;
+
+  const token = encodeSharePayload(payload);
+  const url = `${getBaseUrl()}#share=${token}`;
+
+  if (url.length > 12000) {
+    throw new Error('payload too large');
+  }
+
+  return url;
+}
+
+function getSharedPayloadFromLocation() {
+  const m = location.hash.match(/^#share=([^&]+)/);
+  if (!m) return null;
+  return decodeSharePayload(decodeURIComponent(m[1]));
+}
+
+async function loadSharedPayloadFromLocation() {
+  const payload = getSharedPayloadFromLocation();
+  if (!payload) return false;
+  return await importSharedPayload(payload);
+}
