@@ -679,8 +679,7 @@ async function buildSharePayload(playlistName) {
       name: meta.name,
       duration: meta.duration || 0,
       size: meta.size || 0,
-      thumbnail: meta.thumbnail || null,
-      blobBase64: meta.blob ? await blobToBase64(meta.blob) : null
+      thumbnail: meta.thumbnail || null
     });
   }
 
@@ -697,7 +696,7 @@ async function generateShareLink(playlistName) {
   const token = textToBase64Url(JSON.stringify(payload));
   const url = `${getBaseUrl()}#share=${token}`;
 
-  if (url.length > 180000) {
+  if (url.length > 12000) {
     throw new Error('payload too large');
   }
 
