@@ -12,6 +12,7 @@
       --muted: #b3b3b3;
       --accent: #1db954;
     }
+
     html, body {
       margin: 0;
       width: 100%;
@@ -20,6 +21,7 @@
       color: var(--text);
       font-family: "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
     }
+
     body {
       display: grid;
       place-items: center;
@@ -27,19 +29,23 @@
       padding: 24px;
       box-sizing: border-box;
     }
+
     .box {
       max-width: 520px;
     }
+
     h1 {
       margin: 0 0 12px;
       font-size: 3rem;
       line-height: 1;
     }
+
     p {
       margin: 0 0 10px;
       color: var(--muted);
       line-height: 1.6;
     }
+
     a {
       display: inline-block;
       margin-top: 14px;
@@ -47,6 +53,7 @@
       text-decoration: none;
       font-weight: 700;
     }
+
     a:hover {
       text-decoration: underline;
     }
@@ -56,16 +63,12 @@
   <div class="box">
     <h1>404 Not Found</h1>
     <p>ページが見つかりませんでした。</p>
-    <p>共有リンクの場合は、ホームに戻ることで自動的に読み込まれます。</p>
+    <p>ホームに戻ると、共有リンクは index.html 側で読み込まれます。</p>
     <a id="homeLink" href="./index.html">ホームへ戻る</a>
   </div>
 
   <script>
     (function () {
-      try {
-        sessionStorage.setItem('ppSharedRoute', location.pathname + location.search + location.hash);
-      } catch (e) {}
-
       function getBasePath() {
         const path = location.pathname.replace(/\/+$/, '');
         const host = location.hostname;
@@ -81,12 +84,14 @@
       }
 
       const basePath = getBasePath();
+      const home = basePath + 'index.html';
+
       const homeLink = document.getElementById('homeLink');
-      homeLink.href = basePath + 'index.html';
+      if (homeLink) homeLink.href = home;
 
       setTimeout(() => {
-        location.replace(basePath + 'index.html');
-      }, 50);
+        location.replace(home);
+      }, 80);
     })();
   </script>
 
