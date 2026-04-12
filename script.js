@@ -1,3 +1,4 @@
+const SHARE_API_BASE = 'https://playpocket.takkunmcjp.workers.dev';
 const DB_NAME = 'offline-playlist-db';
 const DB_VERSION = 2;
 const STORE_VIDEOS = 'videos';
@@ -667,7 +668,9 @@ async function buildSharePayload(playlistName) {
       id: meta.id,
       name: meta.name,
       duration: meta.duration || 0,
-      size: meta.size || 0
+      size: meta.size || 0,
+      thumbnail: meta.thumbnail || null,
+      blobBase64: meta.blob ? await blobToBase64(meta.blob) : null
     });
   }
 
@@ -696,20 +699,31 @@ async function generateShareLink(playlistName) {
   const payload = await buildSharePayload(playlistName);
   if (!payload) return null;
 
-  const token = encodeSharePayload(payload);
-  const url = `${getBaseUrl()}#share=${token}`;
-
-  if (url.length > 12000) {
-    throw new Error('payload too large');
-  }
-
-  return url;
+  const result = await uploadSharePayload(payload);
+  return `${getBaseUrl()}#share=${encodeURIComponent(result.id)}`;
 }
 
-function getSharedPayloadFromLocation() {
+function getSharedPayloadIdFromLocation() {
   const m = location.hash.match(/^#share=([^&]+)/);
   if (!m) return null;
-  return decodeSharePayload(m[1]);
+  return decodeURIComponent(m[1]);
+}
+
+async function loadSharedPayloadFromLocation() {
+  const id = getSharedPayloadIdFromLocation();
+  if (!id) return false;
+
+  const res = await fetch(`${SHARE_API_BASE}/api/share/${encodeURIComponent(id)}`);
+  if (!res.ok) return false;
+
+  const payload = await res.json();
+  const ok = await importSharedPayload(payload);
+
+  if (ok) {
+    history.replaceState(null, '', getBaseUrl());
+  }
+
+  return ok;
 }
 
 function clearSharedHash() {
@@ -992,3 +1006,19 @@ if (overlay) {
   await refreshTrackList();
   await updateTotalDuration();
 })();
+
+async function uploadSharePayload(payload) {
+  const res = await fetch(`${SHARE_API_BASE}/api/share`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    throw new Error('upload failed');
+  }
+
+  return await res.json();
+}
