@@ -11,6 +11,7 @@ let playMode = 'order';
 let shuffleOrder = [];
 let videoListCache = {};
 let currentObjectURL = null;
+let shareBusy = false;
 
 const fileInput = document.getElementById('fileInput');
 const dropZone = document.getElementById('dropZone');
@@ -178,19 +179,22 @@ async function copyText(text) {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    let ok = false;
     try {
-      ok = document.execCommand('copy');
-    } catch {}
-    document.body.removeChild(ta);
-    return ok;
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.readOnly = true;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -407,11 +411,13 @@ async function refreshTrackList() {
     li.dataset.id = id;
     li.draggable = true;
 
+    const sizeMb = Math.round((meta.size || 0) / 1024 / 1024);
+
     li.innerHTML = `
       <img class="thumb" src="${meta.thumbnail || ''}" alt="thumb" />
       <div class="meta">
         <div class="title">${meta.name}</div>
-        <div class="sub">${formatTime(meta.duration)} • ${Math.round(meta.size / 1024 / 1024)} MB</div>
+        <div class="sub">${formatTime(meta.duration)} • ${sizeMb} MB</div>
       </div>
       <div class="track-actions">
         <button class="small-btn play-now">再生</button>
@@ -656,6 +662,37 @@ async function ensureUniquePlaylistName(baseName) {
   return `${baseName} (${i})`;
 }
 
+function buildShareDisplay(url) {
+  if (!shareURL) return;
+  shareURL.innerHTML = '';
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = url;
+  link.style.color = 'var(--muted)';
+  link.style.wordBreak = 'break-all';
+  link.style.display = 'block';
+  link.style.marginBottom = '8px';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'small-btn';
+  copyBtn.textContent = 'リンクをコピー';
+
+  copyBtn.addEventListener('click', async () => {
+    const ok = await copyText(url);
+    copyBtn.textContent = ok ? 'コピーしました' : 'コピー失敗';
+    setTimeout(() => {
+      copyBtn.textContent = 'リンクをコピー';
+    }, 1500);
+  });
+
+  shareURL.appendChild(link);
+  shareURL.appendChild(copyBtn);
+}
+
 async function buildSharePayload(playlistName) {
   const pl = await idbGet(STORE_PLAYLISTS, playlistName);
   if (!pl) return null;
@@ -670,7 +707,6 @@ async function buildSharePayload(playlistName) {
       name: meta.name,
       duration: meta.duration || 0,
       size: meta.size || 0,
-      thumbnail: meta.thumbnail || null,
       blobBase64: meta.blob ? await blobToBase64(meta.blob) : null
     });
   }
@@ -683,19 +719,28 @@ async function buildSharePayload(playlistName) {
 }
 
 async function uploadSharePayload(payload) {
-  const res = await fetch(`${SHARE_API_BASE}/api/share`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
 
-  if (!res.ok) {
-    throw new Error('upload failed');
+  try {
+    const res = await fetch(`${SHARE_API_BASE}/api/share`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`upload failed: ${res.status}${text ? ` ${text}` : ''}`);
+    }
+
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
   }
-
-  return await res.json();
 }
 
 async function generateShareLink(playlistName) {
@@ -731,7 +776,7 @@ async function importSharedPayload(payload) {
       name: it.name || 'video',
       duration: it.duration || 0,
       blob,
-      thumbnail: it.thumbnail || null,
+      thumbnail: null,
       size: it.size || 0
     };
 
@@ -765,29 +810,53 @@ async function loadSharedPayloadFromLocation() {
 
 if (shareBtn) {
   shareBtn.addEventListener('click', async () => {
+    if (shareBusy) return;
+
+    shareBusy = true;
+    shareBtn.disabled = true;
+    const oldText = shareBtn.textContent;
+    shareBtn.textContent = '共有中...';
+    if (shareURL) shareURL.textContent = 'リンクを生成中です...';
+
     try {
-      if (!currentPlaylist) return alert('プレイリストを選択してください');
+      if (!currentPlaylist) {
+        alert('プレイリストを選択してください');
+        return;
+      }
 
       const url = await generateShareLink(currentPlaylist);
-      if (!url) return alert('共有に失敗しました');
+      if (!url) {
+        alert('共有に失敗しました');
+        if (shareURL) shareURL.textContent = '';
+        return;
+      }
 
-      if (shareURL) shareURL.textContent = url;
+      buildShareDisplay(url);
 
       const copied = await copyText(url);
       if (copied) {
-        const old = shareBtn.textContent;
         shareBtn.textContent = 'コピーしました';
-        setTimeout(() => {
-          shareBtn.textContent = old;
-        }, 1500);
+      } else {
+        shareBtn.textContent = 'コピー失敗';
+        if (shareURL) {
+          const note = document.createElement('div');
+          note.style.color = 'var(--muted)';
+          note.style.fontSize = '12px';
+          note.style.marginTop = '6px';
+          note.textContent = '自動コピーに失敗しました。下の「リンクをコピー」ボタンを使ってください。';
+          shareURL.appendChild(note);
+        }
       }
     } catch (err) {
-      console.error(err);
-      if (String(err && err.message) === 'upload failed') {
-        alert('共有先への保存に失敗しました');
-      } else {
-        alert('共有に失敗しました');
-      }
+      console.error('共有エラー:', err);
+      alert(`共有に失敗しました\n${err?.message || err}`);
+      if (shareURL) shareURL.textContent = '';
+    } finally {
+      setTimeout(() => {
+        shareBtn.textContent = oldText;
+        shareBtn.disabled = false;
+        shareBusy = false;
+      }, 1200);
     }
   });
 }
