@@ -160,7 +160,7 @@ function downloadBlob(blob, filename) {
 function blobToBase64(blob) {
   return new Promise((res) => {
     const reader = new FileReader();
-    reader.onload = () => res(reader.result.split(',')[1]);
+    reader.onload = () => res(String(reader.result).split(',')[1]);
     reader.readAsDataURL(blob);
   });
 }
@@ -172,27 +172,11 @@ function base64ToBlob(base64, type) {
   return new Blob([arr], { type });
 }
 
-function textToBase64Url(text) {
-  const bytes = new TextEncoder().encode(text);
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-function base64UrlToText(base64url) {
-  let s = base64url.replace(/-/g, '+').replace(/_/g, '/');
-  while (s.length % 4) s += '=';
-  const bin = atob(s);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
-}
-
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
-  } catch (e) {
+  } catch {
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
@@ -203,7 +187,7 @@ async function copyText(text) {
     let ok = false;
     try {
       ok = document.execCommand('copy');
-    } catch (err) {}
+    } catch {}
     document.body.removeChild(ta);
     return ok;
   }
@@ -245,6 +229,11 @@ async function generateThumbnail(file) {
       canvas.width = 320;
       canvas.height = 180;
       const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        res(null);
+        return;
+      }
       ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
       const data = canvas.toDataURL('image/jpeg', 0.7);
       URL.revokeObjectURL(url);
@@ -252,7 +241,7 @@ async function generateThumbnail(file) {
     });
 
     setTimeout(() => {
-      try { URL.revokeObjectURL(url); } catch (e) {}
+      try { URL.revokeObjectURL(url); } catch {}
       res(null);
     }, 3000);
   });
@@ -272,7 +261,7 @@ async function addFiles(files) {
   await ensureDB();
 
   for (const f of files) {
-    if (f.type !== 'video/mp4') continue;
+    if (!f.type.startsWith('video/')) continue;
 
     const id = uid();
     const duration = await getVideoDuration(f);
@@ -342,7 +331,7 @@ async function refreshPlaylistsUI() {
         await refreshPlaylistsUI();
         await refreshTrackList();
       } catch (err) {
-        if (err.message === 'exists') alert('同名のプレイリストが既に存在します');
+        if (err && err.message === 'exists') alert('同名のプレイリストが既に存在します');
         else alert('名前変更に失敗しました');
       }
     });
@@ -400,7 +389,7 @@ async function refreshTrackList() {
   for (const id of pl.items) {
     if (!videoListCache[id]) {
       const v = await idbGet(STORE_VIDEOS, id);
-      if (v) videoListCache[id] = v;
+      if (v) videoListCache[v.id] = v;
     }
   }
 
@@ -504,7 +493,7 @@ async function loadAndPlayById(id) {
   }
 
   if (currentObjectURL) {
-    try { URL.revokeObjectURL(currentObjectURL); } catch (e) {}
+    try { URL.revokeObjectURL(currentObjectURL); } catch {}
     currentObjectURL = null;
   }
 
@@ -517,7 +506,7 @@ async function loadAndPlayById(id) {
 
   try {
     await videoPlayer.play();
-  } catch (e) {}
+  } catch {}
 
   if (window.electronAPI) {
     const cleanTitle = meta.name.replace(/\.[^/.]+$/, '');
@@ -678,22 +667,36 @@ async function buildSharePayload(playlistName) {
       id: meta.id,
       name: meta.name,
       duration: meta.duration || 0,
-      size: meta.size || 0,
-      thumbnail: meta.thumbnail || null
+      size: meta.size || 0
     });
   }
 
   return {
+    version: 1,
     name: pl.name,
     items
   };
+}
+
+function encodeSharePayload(payload) {
+  return LZString.compressToEncodedURIComponent(JSON.stringify(payload));
+}
+
+function decodeSharePayload(token) {
+  try {
+    const json = LZString.decompressFromEncodedURIComponent(token);
+    if (!json) return null;
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
 }
 
 async function generateShareLink(playlistName) {
   const payload = await buildSharePayload(playlistName);
   if (!payload) return null;
 
-  const token = textToBase64Url(JSON.stringify(payload));
+  const token = encodeSharePayload(payload);
   const url = `${getBaseUrl()}#share=${token}`;
 
   if (url.length > 12000) {
@@ -706,12 +709,12 @@ async function generateShareLink(playlistName) {
 function getSharedPayloadFromLocation() {
   const m = location.hash.match(/^#share=([^&]+)/);
   if (!m) return null;
+  return decodeSharePayload(m[1]);
+}
 
-  try {
-    const json = base64UrlToText(decodeURIComponent(m[1]));
-    return JSON.parse(json);
-  } catch (e) {
-    return null;
+function clearSharedHash() {
+  if (location.hash.startsWith('#share=')) {
+    history.replaceState(null, '', getBaseUrl());
   }
 }
 
@@ -724,17 +727,12 @@ async function importSharedPayload(payload) {
   for (const it of payload.items) {
     const id = it.id || uid();
 
-    let blob = null;
-    if (it.blobBase64) {
-      blob = base64ToBlob(it.blobBase64, 'video/mp4');
-    }
-
     const meta = {
       id,
       name: it.name || 'video',
       duration: it.duration || 0,
-      blob,
-      thumbnail: it.thumbnail || null,
+      blob: null,
+      thumbnail: null,
       size: it.size || 0
     };
 
@@ -752,7 +750,9 @@ async function importSharedPayload(payload) {
 async function loadSharedPayloadFromLocation() {
   const payload = getSharedPayloadFromLocation();
   if (!payload) return false;
-  return await importSharedPayload(payload);
+  const ok = await importSharedPayload(payload);
+  if (ok) clearSharedHash();
+  return ok;
 }
 
 if (shareBtn) {
@@ -776,7 +776,7 @@ if (shareBtn) {
     } catch (err) {
       console.error(err);
       if (String(err && err.message) === 'payload too large') {
-        alert('プレイリストが大きすぎてURLに収まりません。動画ファイルの共有には外部保存先が必要です。');
+        alert('プレイリストが大きすぎてURLに収まりません。動画ファイルを含めた共有は「プレイリストをエクスポート（埋め込み）」を使ってください。');
       } else {
         alert('共有に失敗しました');
       }
@@ -939,7 +939,7 @@ importFile.addEventListener('change', async (e) => {
     await refreshPlaylistsUI();
     await refreshTrackList();
     await updateTotalDuration();
-  } catch (err) {
+  } catch {
     alert('インポートに失敗しました');
   }
 
@@ -979,10 +979,6 @@ if (overlay) {
   vids.forEach(v => videoListCache[v.id] = v);
 
   await ensureDefaultPlaylist();
-  createVolumeControls();
-  await refreshPlaylistsUI();
-  await refreshTrackList();
-  await updateTotalDuration();
 
   const loaded = await loadSharedPayloadFromLocation();
   if (loaded) {
@@ -990,45 +986,9 @@ if (overlay) {
     await refreshTrackList();
     await updateTotalDuration();
   }
+
+  createVolumeControls();
+  await refreshPlaylistsUI();
+  await refreshTrackList();
+  await updateTotalDuration();
 })();
-
-function encodeSharePayload(payload) {
-  const json = JSON.stringify(payload);
-  return LZString.compressToEncodedURIComponent(json);
-}
-
-function decodeSharePayload(token) {
-  try {
-    const json = LZString.decompressFromEncodedURIComponent(token);
-    if (!json) return null;
-    return JSON.parse(json);
-  } catch (e) {
-    return null;
-  }
-}
-
-async function generateShareLink(playlistName) {
-  const payload = await buildSharePayload(playlistName);
-  if (!payload) return null;
-
-  const token = encodeSharePayload(payload);
-  const url = `${getBaseUrl()}#share=${token}`;
-
-  if (url.length > 12000) {
-    throw new Error('payload too large');
-  }
-
-  return url;
-}
-
-function getSharedPayloadFromLocation() {
-  const m = location.hash.match(/^#share=([^&]+)/);
-  if (!m) return null;
-  return decodeSharePayload(decodeURIComponent(m[1]));
-}
-
-async function loadSharedPayloadFromLocation() {
-  const payload = getSharedPayloadFromLocation();
-  if (!payload) return false;
-  return await importSharedPayload(payload);
-}
