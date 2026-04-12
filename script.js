@@ -331,6 +331,7 @@ async function refreshPlaylistsUI() {
         if (currentPlaylist === p.name) currentPlaylist = trimmed;
         await refreshPlaylistsUI();
         await refreshTrackList();
+        await updateTotalDuration();
       } catch (err) {
         if (err && err.message === 'exists') alert('同名のプレイリストが既に存在します');
         else alert('名前変更に失敗しました');
@@ -681,18 +682,20 @@ async function buildSharePayload(playlistName) {
   };
 }
 
-function encodeSharePayload(payload) {
-  return LZString.compressToEncodedURIComponent(JSON.stringify(payload));
-}
+async function uploadSharePayload(payload) {
+  const res = await fetch(`${SHARE_API_BASE}/api/share`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
 
-function decodeSharePayload(token) {
-  try {
-    const json = LZString.decompressFromEncodedURIComponent(token);
-    if (!json) return null;
-    return JSON.parse(json);
-  } catch {
-    return null;
+  if (!res.ok) {
+    throw new Error('upload failed');
   }
+
+  return await res.json();
 }
 
 async function generateShareLink(playlistName) {
@@ -709,29 +712,6 @@ function getSharedPayloadIdFromLocation() {
   return decodeURIComponent(m[1]);
 }
 
-async function loadSharedPayloadFromLocation() {
-  const id = getSharedPayloadIdFromLocation();
-  if (!id) return false;
-
-  const res = await fetch(`${SHARE_API_BASE}/api/share/${encodeURIComponent(id)}`);
-  if (!res.ok) return false;
-
-  const payload = await res.json();
-  const ok = await importSharedPayload(payload);
-
-  if (ok) {
-    history.replaceState(null, '', getBaseUrl());
-  }
-
-  return ok;
-}
-
-function clearSharedHash() {
-  if (location.hash.startsWith('#share=')) {
-    history.replaceState(null, '', getBaseUrl());
-  }
-}
-
 async function importSharedPayload(payload) {
   if (!payload || !Array.isArray(payload.items)) return false;
 
@@ -741,12 +721,17 @@ async function importSharedPayload(payload) {
   for (const it of payload.items) {
     const id = it.id || uid();
 
+    let blob = null;
+    if (it.blobBase64) {
+      blob = base64ToBlob(it.blobBase64, 'video/mp4');
+    }
+
     const meta = {
       id,
       name: it.name || 'video',
       duration: it.duration || 0,
-      blob: null,
-      thumbnail: null,
+      blob,
+      thumbnail: it.thumbnail || null,
       size: it.size || 0
     };
 
@@ -762,10 +747,19 @@ async function importSharedPayload(payload) {
 }
 
 async function loadSharedPayloadFromLocation() {
-  const payload = getSharedPayloadFromLocation();
-  if (!payload) return false;
+  const id = getSharedPayloadIdFromLocation();
+  if (!id) return false;
+
+  const res = await fetch(`${SHARE_API_BASE}/api/share/${encodeURIComponent(id)}`);
+  if (!res.ok) return false;
+
+  const payload = await res.json();
   const ok = await importSharedPayload(payload);
-  if (ok) clearSharedHash();
+
+  if (ok) {
+    history.replaceState(null, '', getBaseUrl());
+  }
+
   return ok;
 }
 
@@ -789,8 +783,8 @@ if (shareBtn) {
       }
     } catch (err) {
       console.error(err);
-      if (String(err && err.message) === 'payload too large') {
-        alert('プレイリストが大きすぎてURLに収まりません。動画ファイルを含めた共有は「プレイリストをエクスポート（埋め込み）」を使ってください。');
+      if (String(err && err.message) === 'upload failed') {
+        alert('共有先への保存に失敗しました');
       } else {
         alert('共有に失敗しました');
       }
@@ -1006,19 +1000,3 @@ if (overlay) {
   await refreshTrackList();
   await updateTotalDuration();
 })();
-
-async function uploadSharePayload(payload) {
-  const res = await fetch(`${SHARE_API_BASE}/api/share`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
-
-  if (!res.ok) {
-    throw new Error('upload failed');
-  }
-
-  return await res.json();
-}
