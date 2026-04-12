@@ -720,6 +720,36 @@ async function buildSharePayload(playlistName) {
 
 async function uploadSharePayload(payload) {
   const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 180000);
+
+  try {
+    const res = await fetch(`${SHARE_API_BASE}/api/share`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`upload failed: ${res.status}${text ? ` ${text}` : ''}`);
+    }
+
+    return await res.json();
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error('timeout');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function uploadSharePayload(payload) {
+  const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
@@ -839,10 +869,9 @@ if (shareBtn) {
       buildShareDisplay(url);
 
       const copied = await copyText(url);
-      if (copied) {
-        shareBtn.textContent = 'コピーしました';
-      } else {
-        shareBtn.textContent = 'コピー失敗';
+      shareBtn.textContent = copied ? 'コピーしました' : 'コピー失敗';
+
+      if (!copied) {
         alert('自動コピーに失敗しました。下のリンクを手動でコピーしてください。');
       }
     } catch (err) {
