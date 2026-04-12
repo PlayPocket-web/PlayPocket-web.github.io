@@ -719,28 +719,20 @@ async function buildSharePayload(playlistName) {
 }
 
 async function uploadSharePayload(payload) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60000);
+  const res = await fetch(`${SHARE_API_BASE}/api/share`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
 
-  try {
-    const res = await fetch(`${SHARE_API_BASE}/api/share`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`upload failed: ${res.status}${text ? ` ${text}` : ''}`);
-    }
-
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`upload failed: ${res.status}${text ? ` ${text}` : ''}`);
   }
+
+  return await res.json();
 }
 
 async function generateShareLink(playlistName) {
@@ -839,12 +831,11 @@ if (shareBtn) {
       } else {
         shareBtn.textContent = 'コピー失敗';
         if (shareURL) {
-          const note = document.createElement('div');
-          note.style.color = 'var(--muted)';
-          note.style.fontSize = '12px';
-          note.style.marginTop = '6px';
-          note.textContent = '自動コピーに失敗しました。下の「リンクをコピー」ボタンを使ってください。';
-          shareURL.appendChild(note);
+          shareURL.textContent = url;
+        }
+        const copied = await copyText(url);
+        if (!copied) {
+          alert('自動コピーに失敗しました。下のリンクを手動でコピーしてください。');
         }
       }
     } catch (err) {
