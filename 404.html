@@ -11,6 +11,8 @@
       --text: #fff;
       --muted: #b3b3b3;
       --accent: #1db954;
+      --button-bg: #1db954;
+      --button-text: #000;
     }
 
     html, body {
@@ -32,6 +34,7 @@
 
     .box {
       max-width: 520px;
+      width: 100%;
     }
 
     h1 {
@@ -46,7 +49,29 @@
       line-height: 1.6;
     }
 
-    a {
+    .btn {
+      display: inline-block;
+      margin-top: 16px;
+      padding: 12px 18px;
+      border: none;
+      border-radius: 10px;
+      background: var(--button-bg);
+      color: var(--button-text);
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      font-size: 1rem;
+    }
+
+    .btn:hover {
+      filter: brightness(1.05);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .link {
       display: inline-block;
       margin-top: 14px;
       color: var(--accent);
@@ -54,7 +79,7 @@
       font-weight: 700;
     }
 
-    a:hover {
+    .link:hover {
       text-decoration: underline;
     }
   </style>
@@ -63,8 +88,11 @@
   <div class="box">
     <h1>404 Not Found</h1>
     <p>ページが見つかりませんでした。</p>
-    <p>ホームに戻ると、共有リンクは index.html 側で読み込まれます。</p>
-    <a id="homeLink" href="./index.html">ホームへ戻る</a>
+    <p>ボタンを押すとホームに戻ります。共有リンクは index.html 側で読み込まれます。</p>
+
+    <button id="homeBtn" class="btn" type="button">ホームへ戻る</button>
+    <br />
+    <a id="homeLink" class="link" href="./index.html">index.html を開く</a>
   </div>
 
   <script>
@@ -87,11 +115,15 @@
       const home = basePath + 'index.html';
 
       const homeLink = document.getElementById('homeLink');
+      const homeBtn = document.getElementById('homeBtn');
+
       if (homeLink) homeLink.href = home;
 
-      setTimeout(() => {
-        location.replace(home);
-      }, 80);
+      if (homeBtn) {
+        homeBtn.addEventListener('click', () => {
+          location.href = home;
+        });
+      }
     })();
   </script>
 
