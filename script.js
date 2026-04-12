@@ -719,20 +719,33 @@ async function buildSharePayload(playlistName) {
 }
 
 async function uploadSharePayload(payload) {
-  const res = await fetch(`${SHARE_API_BASE}/api/share`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`upload failed: ${res.status}${text ? ` ${text}` : ''}`);
+  try {
+    const res = await fetch(`${SHARE_API_BASE}/api/share`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`upload failed: ${res.status}${text ? ` ${text}` : ''}`);
+    }
+
+    return await res.json();
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error('timeout');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return await res.json();
 }
 
 async function generateShareLink(playlistName) {
@@ -830,17 +843,15 @@ if (shareBtn) {
         shareBtn.textContent = 'コピーしました';
       } else {
         shareBtn.textContent = 'コピー失敗';
-        if (shareURL) {
-          shareURL.textContent = url;
-        }
-        const copied = await copyText(url);
-        if (!copied) {
-          alert('自動コピーに失敗しました。下のリンクを手動でコピーしてください。');
-        }
+        alert('自動コピーに失敗しました。下のリンクを手動でコピーしてください。');
       }
     } catch (err) {
       console.error('共有エラー:', err);
-      alert(`共有に失敗しました\n${err?.message || err}`);
+      if (err && err.message === 'timeout') {
+        alert('共有がタイムアウトしました。動画が大きすぎる可能性があります。');
+      } else {
+        alert(`共有に失敗しました\n${err?.message || err}`);
+      }
       if (shareURL) shareURL.textContent = '';
     } finally {
       setTimeout(() => {
