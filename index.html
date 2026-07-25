@@ -1,209 +1,125 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta name="color-scheme" content="dark light" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>PlayPocket</title>
-  <link rel="stylesheet" href="styles.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ブラウザで動くオフライン動画プレイリストプレーヤー">
+  <meta name="theme-color" content="#121212">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' blob: data:; img-src 'self' blob: data:; media-src 'self' blob: data:; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>PlayPocket Web</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand-block">
-        <div class="brand">PlayPocket</div>
-        <div class="brand-sub">オフライン再生プレイリスト</div>
+    <aside class="sidebar" aria-label="プレイリスト">
+      <a class="brand" href="./" aria-label="PlayPocket Web ホーム">
+        <span class="brand-mark">▶</span>
+        <span>PlayPocket <em>Web</em></span>
+      </a>
+
+      <div class="create-playlist">
+        <label class="sr-only" for="newPlaylistName">新しいプレイリスト名</label>
+        <input id="newPlaylistName" maxlength="80" placeholder="新しいプレイリスト">
+        <button id="createPlaylistBtn" class="icon-button" type="button" aria-label="プレイリストを作成">＋</button>
       </div>
 
-      <div class="card">
-        <div class="section-label">プレイリスト</div>
-        <div class="row">
-          <input id="newPlaylistName" class="text-input" type="text" placeholder="新しいプレイリスト名" maxlength="80" />
-          <button id="createPlaylistBtn" class="btn btn-primary" type="button">作成</button>
-        </div>
-        <ul id="playlists" class="playlist-list" aria-label="プレイリスト一覧"></ul>
+      <div class="sidebar-section-label">YOUR PLAYLISTS</div>
+      <ul id="playlists" class="playlists"></ul>
+
+      <div class="sidebar-actions">
+        <input id="fileInput" type="file" accept="video/*" multiple>
+        <label class="button primary" for="fileInput">動画を追加</label>
+        <button id="sharePlaylistBtn" class="button" type="button">共有する</button>
+        <button id="exportMetaBtn" class="button text-button" type="button">リストをエクスポート</button>
+        <button id="exportFullBtn" class="button text-button" type="button">動画を含めて書き出す</button>
+        <input id="importFile" type="file" accept=".json,application/json">
+        <label class="button text-button" for="importFile">ファイルをインポート</label>
       </div>
 
-      <div class="card">
-        <div class="section-label">ファイル追加</div>
-        <input id="fileInput" class="hidden-file" type="file" accept="video/*" multiple />
-        <label for="fileInput" class="drop-zone" id="dropZone">
-          ここに動画ファイルをドラッグ＆ドロップ
-          <span>またはクリックして選択</span>
-        </label>
-
-        <div class="stack">
-          <button id="exportMetaBtn" class="btn" type="button">メタ付きでエクスポート</button>
-          <button id="exportWithBlobsBtn" class="btn" type="button">完全バックアップをエクスポート</button>
-          <input id="importFile" class="hidden-file" type="file" accept=".json,application/json" />
-          <label for="importFile" class="btn" type="button">プレイリストをインポート</label>
-        </div>
-      </div>
-
-      <div class="card info-card">
-        <div class="section-label">保存情報</div>
-        <div class="info-grid">
-          <div>
-            <div class="info-value" id="playlistCount">0</div>
-            <div class="info-caption">プレイリスト</div>
-          </div>
-          <div>
-            <div class="info-value" id="trackCount">0</div>
-            <div class="info-caption">動画</div>
-          </div>
-          <div class="span-2">
-            <div class="info-value" id="libraryDuration">00:00:00</div>
-            <div class="info-caption">ライブラリ合計時間</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="sidebar-footer">
-        <button id="openSettingsBtn" class="btn" type="button">設定</button>
-        <button id="clearAllBtn" class="btn btn-danger" type="button">全データ削除</button>
-      </div>
+      <p class="privacy-note">動画とプレイリストはこのブラウザにだけ保存されます。</p>
     </aside>
 
     <main class="main">
       <header class="topbar">
-        <div class="topbar-left">
-          <div class="page-title">PlayPocket</div>
-          <div id="statusText" class="status-text">読み込み中...</div>
+        <div>
+          <p class="eyebrow">OFFLINE VIDEO LIBRARY</p>
+          <h1 id="playlistTitle">プレイリストを読み込み中</h1>
         </div>
-
-        <div class="topbar-right">
-          <label class="search-box">
-            <span>検索</span>
-            <input id="trackSearch" type="search" placeholder="曲名 / 動画名を検索" />
-          </label>
-
-          <div class="mode-switch" role="tablist" aria-label="再生モード">
-            <button id="orderBtn" class="mode-btn active" type="button">追加順</button>
-            <button id="shuffleBtn" class="mode-btn" type="button">シャッフル</button>
-            <button id="randomBtn" class="mode-btn" type="button">ランダム</button>
-          </div>
+        <div class="mode-group" role="tablist" aria-label="再生モード">
+          <button id="orderBtn" class="mode active" type="button" role="tab" aria-selected="true">追加順</button>
+          <button id="shuffleBtn" class="mode" type="button" role="tab" aria-selected="false">シャッフル</button>
+          <button id="randomBtn" class="mode" type="button" role="tab" aria-selected="false">ランダム</button>
         </div>
       </header>
 
-      <section class="player-layout">
-        <div class="player-panel">
-          <div id="videoShell" class="video-shell">
-            <video id="videoPlayer" playsinline preload="metadata"></video>
-            <button id="centerPlayBtn" class="center-play" type="button" aria-label="再生 / 一時停止">▶</button>
-            <div class="video-gradient"></div>
-          </div>
-
-          <div class="seek-row">
-            <span id="currentTime" class="time-pill">00:00:00</span>
-            <input id="seekBar" type="range" min="0" max="1000" value="0" aria-label="再生位置" />
-            <span id="durationTime" class="time-pill">00:00:00</span>
-          </div>
-
-          <div class="control-grid">
-            <div class="control-group">
-              <button id="prevBtn" class="icon-btn" type="button" aria-label="前へ">⏮</button>
-              <button id="playPauseBtn" class="icon-btn icon-btn-accent" type="button" aria-label="再生 / 一時停止">▶</button>
-              <button id="nextBtn" class="icon-btn" type="button" aria-label="次へ">⏭</button>
-              <button id="fullscreenBtn" class="icon-btn" type="button" aria-label="全画面">⛶</button>
-            </div>
-
-            <div class="control-group control-group-wide">
-              <label class="speed-control">
-                <span>速度</span>
-                <select id="speedSelect">
-                  <option value="0.5">0.5x</option>
-                  <option value="0.75">0.75x</option>
-                  <option value="1" selected>1x</option>
-                  <option value="1.25">1.25x</option>
-                  <option value="1.5">1.5x</option>
-                  <option value="2">2x</option>
-                </select>
-              </label>
-
-              <div class="volume-control">
-                <button id="muteBtn" class="icon-btn icon-btn-small" type="button" aria-label="ミュート">🔊</button>
-                <input id="volumeSlider" type="range" min="0" max="100" value="100" aria-label="音量" />
-                <span id="volumeLabel" class="mini-text">100%</span>
+      <section class="content-grid">
+        <div class="player-column">
+          <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="動画をドラッグアンドドロップして追加">
+            <div id="videoStage" class="video-stage paused">
+              <video id="videoPlayer" preload="metadata" playsinline></video>
+              <button id="centerPlayBtn" class="center-play" type="button" aria-label="再生または一時停止">▶</button>
+              <div id="emptyState" class="empty-state">
+                <span class="empty-icon">↥</span>
+                <strong>動画を追加してはじめる</strong>
+                <span>ここへ動画をドロップ、または左の「動画を追加」を選択</span>
               </div>
             </div>
+            <div class="seek-row">
+              <span id="currentTime">00:00:00</span>
+              <label class="sr-only" for="seekBar">再生位置</label>
+              <input id="seekBar" type="range" min="0" max="1000" value="0">
+              <span id="durationTime">00:00:00</span>
+            </div>
           </div>
 
-          <div class="player-meta">
-            <div>
-              <div id="currentPlaylistLabel" class="playlist-label">未選択</div>
-              <div id="trackMetaText" class="mini-text">動画を追加して再生を開始できます</div>
-            </div>
-            <div class="mini-text">
-              合計 <span id="totalDuration">00:00:00</span>
-            </div>
+          <div class="player-controls">
+            <button id="prevBtn" class="control-button" type="button" aria-label="前の動画">◀◀</button>
+            <button id="playPauseBtn" class="play-button" type="button" aria-label="再生または一時停止">▶</button>
+            <button id="nextBtn" class="control-button" type="button" aria-label="次の動画">▶▶</button>
+            <label class="speed-control">速度
+              <select id="speedSelect" aria-label="再生速度">
+                <option value="0.5">0.5x</option><option value="0.75">0.75x</option><option value="1" selected>1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option><option value="2">2x</option>
+              </select>
+            </label>
+            <button id="fullscreenBtn" class="control-button" type="button" aria-label="全画面">⛶</button>
+            <label class="volume-control" for="volumeBar">音量 <input id="volumeBar" type="range" min="0" max="1" step="0.01" value="1"></label>
+            <span class="total-time">合計 <strong id="totalDuration">00:00:00</strong></span>
           </div>
         </div>
 
-        <div class="track-panel card">
-          <div class="panel-head">
-            <div>
-              <div class="section-label">トラック</div>
-              <div class="mini-text" id="trackPanelSub">プレイリストを選ぶと表示されます</div>
-            </div>
-            <div class="panel-actions">
-              <button id="renamePlaylistBtn" class="btn btn-ghost" type="button">名前変更</button>
-              <button id="deletePlaylistBtn" class="btn btn-ghost" type="button">削除</button>
-            </div>
-          </div>
-
-          <ul id="trackList" class="track-list" aria-label="トラック一覧"></ul>
-        </div>
+        <section class="track-panel" aria-label="動画一覧">
+          <div class="track-panel-head"><span>VIDEOS</span><span id="trackCount">0 本</span></div>
+          <ul id="trackList" class="track-list"></ul>
+        </section>
       </section>
     </main>
   </div>
 
-  <div id="settingsModal" class="modal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-      <div class="modal-head">
-        <h2 id="settingsTitle">設定</h2>
-        <button id="closeSettingsBtn" class="icon-btn icon-btn-small" type="button" aria-label="閉じる">×</button>
+  <div id="shareModal" class="modal-backdrop" aria-hidden="true">
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+      <button id="closeShareBtn" class="close-button" type="button" aria-label="閉じる">×</button>
+      <p class="eyebrow">SHARE PLAYLIST</p>
+      <h2 id="shareTitle">プレイリストを共有</h2>
+      <p id="shareSummary" class="modal-summary"></p>
+      <div class="share-card featured">
+        <div class="share-icon">↗</div>
+        <div><h3>動画を含む共有ファイル</h3><p>相手がすぐに再生できるファイルを作成します。最大500MBです。</p><button id="createSharePackageBtn" class="button primary" type="button">共有ファイルを作成</button></div>
       </div>
-
-      <div class="settings-grid">
-        <label class="setting-row">
-          <span>前回の状態を復元</span>
-          <input id="restoreLastState" type="checkbox" />
-        </label>
-
-        <label class="setting-row">
-          <span>再生終了後に次へ進む</span>
-          <input id="autoAdvance" type="checkbox" />
-        </label>
-
-        <label class="setting-row">
-          <span>サムネイルを表示</span>
-          <input id="showThumbnails" type="checkbox" />
-        </label>
-
-        <label class="setting-row">
-          <span>コンパクト表示</span>
-          <input id="compactMode" type="checkbox" />
-        </label>
-
-        <label class="setting-row">
-          <span>テーマ</span>
-          <select id="themeSelect">
-            <option value="dark">ダーク</option>
-            <option value="light">ライト</option>
-            <option value="system">システム</option>
-          </select>
-        </label>
+      <div class="share-card">
+        <div class="share-icon muted">#</div>
+        <div><h3>軽量共有コード</h3><p>動画は含まず、タイトルと並び順だけを渡します。</p><button id="copyShareCodeBtn" class="button" type="button">共有コードをコピー</button></div>
       </div>
-
-      <div class="modal-foot">
-        <button id="resetSettingsBtn" class="btn btn-danger" type="button">設定を初期化</button>
+      <div class="share-import">
+        <label for="shareCodeInput">共有コードを受け取った場合</label>
+        <textarea id="shareCodeInput" rows="3" maxlength="520000" placeholder="PLAYPOCKET_SHARE_V1: から始まるコードを貼り付け"></textarea>
+        <button id="importShareCodeBtn" class="button" type="button">共有コードを読み込む</button>
       </div>
-    </div>
+      <p id="shareStatus" class="status-message" role="status" aria-live="polite"></p>
+    </section>
   </div>
 
-  <div id="toastArea" class="toast-area" aria-live="polite" aria-atomic="true"></div>
-
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="share.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
