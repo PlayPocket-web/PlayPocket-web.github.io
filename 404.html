@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#121212" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="robots" content="noindex" />
+  <meta name="description" content="お探しのページが見つかりませんでした。PlayPocketはブラウザだけで動作するオフライン動画プレイリストプレイヤーです。" />
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    img-src 'self' blob: data:;
+    media-src 'self' blob: data:;
+    style-src 'self' 'unsafe-inline';
+    script-src 'self';
+    connect-src 'self';
+    manifest-src 'self';
+    worker-src 'self';
+    object-src 'none';
+    base-uri 'none';
+    form-action 'none';
+    frame-src 'none'
+  ">
+  <title>ページが見つかりません ・ PlayPocket</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icons/favicon.ico" sizes="48x48" />
+  <link rel="icon" href="icons/favicon-32.png" type="image/png" sizes="32x32" />
+  <link rel="icon" href="icons/favicon-16.png" type="image/png" sizes="16x16" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="notfound-page">
+  <main class="notfound-card" role="main">
+    <img class="notfound-icon" src="icons/icon-192.png" alt="PlayPocket" width="64" height="64" />
+    <p class="notfound-eyebrow">PLAYPOCKET</p>
+    <p class="notfound-code">404</p>
+    <h1 class="notfound-title">ページが見つかりませんでした</h1>
+    <p class="notfound-text">
+      お探しのページは移動または削除されたか、URLが正しくない可能性があります。<br />
+      保存済みのプレイリストや動画はこの端末のブラウザ内に残っているため、失われていません。
+    </p>
+    <div class="notfound-actions">
+      <a class="btn share-button" href="./">ホームに戻る</a>
+      <button id="goBackBtn" class="btn" type="button">前のページに戻る</button>
+    </div>
+  </main>
+
+  <script src="js/404.js"></script>
+</body>
+</html>
